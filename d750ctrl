@@ -13,7 +13,7 @@ Keys, also under ?:
   Tab        switch the active band          Up/Down    frequency one step; PgUp/PgDn ten steps
   s          cycle the step                  digits     type a frequency in MHz, Enter tunes, Esc cancels
   [ ]        squelch down, up                p          power: high, mid, low, EL
-  m          mode: FM, NFM, AM, DV, DR       b          make the active band control and transmit
+  m          mode: FM, NFM, AM, DV           b          make the active band control and transmit
   v          VFO or memory on the band       M          memory browser: Up/Down, Enter recalls, R rereads
   t          TNC: off, APRS, KISS            g          GPS output to the PC port on or off
   L          lock or unlock PTT in d750d     u          unkey now
@@ -99,8 +99,10 @@ CONFIG = read_conf()
 CMD_PORT = int(os.environ.get("D750_CMD_PORT", CONFIG.get("cmd_port", "4533")))
 PTT_PORT = int(os.environ.get("D750_PTT_PORT", CONFIG.get("ptt_port", "4532")))
 MYCALL = CONFIG.get("mycall", "").upper() or "N0CALL"
-MODES = {0: "FM", 1: "DV", 2: "AM", 3: "LSB", 4: "USB", 5: "CW", 6: "NFM", 7: "DR", 8: "WFM", 9: "R-CW"}
-MODE_CYCLE = [0, 6, 2, 1, 7]
+# The TM-D750 answers MD with codes 0 to 3 only (tried on the radio November 8): 0 FM, 2 AM by its squelch behaviour;
+# 1 and 3 are DV and NFM. The TH-D74 table (NFM 6, DR 7) does not apply.
+MODES = {0: "FM", 1: "DV", 2: "AM", 3: "NFM"}
+MODE_CYCLE = [0, 3, 2, 1]   # m: FM, NFM, AM, DV
 POWER = {0: "HIGH", 1: "MID", 2: "LOW", 3: "EL"}
 TNC = {0: "off", 1: "APRS", 2: "KISS"}
 STEPS_KHZ = [5, 6.25, 10, 12.5, 15, 20, 25, 50, 100]
@@ -343,7 +345,7 @@ class Ctl:
         elif k == ord("p"): b = self.bands[self.active]; v = (b.power + 1) % 4; self.set_simple("PC", v, f"power {POWER[v]}")
         elif k == ord("m"):
             b = self.bands[self.active]; cur = MODE_CYCLE.index(b.mode) if b.mode in MODE_CYCLE else -1
-            v = MODE_CYCLE[(cur + 1) % len(MODE_CYCLE)]; self.set_simple("MD", v, f"mode {MODES[v]}")
+            v = MODE_CYCLE[(cur + 1) % len(MODE_CYCLE)]; self.set_simple("MD", v, f"mode {MODES.get(v, v)}")
         elif k == ord("b"):
             r = self.d.set(f"BC {self.active},{self.active}"); self.say(f"band {'AB'[self.active]} controls and transmits" if r.startswith("BC") else f"refused: {r}")
         elif k == ord("v"):

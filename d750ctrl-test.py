@@ -41,7 +41,7 @@ send("\x1bOA", 1.2)                                        # Up in keypad mode: 
 step(3, "Up tunes the active band one step", ask("FQ 1") == "FQ 1,0144400000")
 send("]", 1.0); step(4, "] raises the squelch", ask("SQ 1") == "SQ 1,4")
 send("p", 1.0); step(5, "p cycles the power", ask("PC 1") == "PC 1,2")
-send("m", 1.0); step(6, "m cycles the mode to NFM", ask("MD 1") == "MD 1,6")
+send("m", 1.0); step(6, "m cycles the mode to NFM (code 3 on the TM-D750)", ask("MD 1") == "MD 1,3")
 send("b", 1.0); step(7, "b makes the band control and transmit", ask("BC") == "BC 1,1")
 send("146.520\r", 1.2); step(8, "a typed frequency tunes", ask("FQ 1") == "FQ 1,0146520000")
 send("M", 2.0)

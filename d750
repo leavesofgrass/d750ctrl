@@ -3,7 +3,7 @@
 # Verbs:
 #   status                      both bands, transmit band, TNC, squelch, power, daemon state
 #   freq A|B MHZ                set a band's frequency        band A|B            control and transmit band
-#   mode A|B fm|nfm|am|dv|dr    set a band's mode             squelch A|B 0-9     squelch level
+#   mode A|B fm|nfm|am|dv       set a band's mode             squelch A|B 0-9     squelch level
 #   power A|B high|mid|low|el   output power                  busy A|B            squelch open or closed now
 #   watch A|B [SECONDS]         busy once a second            tnc off|aprs|kiss [A|B]   TNC mode by command
 #   vara fm|hf|off|status|cq    xara's mode, state, one CQ    fixup               put back what the box relies on
@@ -48,8 +48,9 @@ band_num() { case "${1^^}" in A|0) echo 0;; B|1) echo 1;; *) usage "band is A or
 band_letter() { [ "$1" = 0 ] && echo A || echo B; }
 mhz() { awk -v hz="$1" 'BEGIN { printf "%.3f", hz / 1000000 }'; }
 hz10() { awk -v m="$1" 'BEGIN { printf "%010d", m * 1000000 + 0.5 }'; }
-mode_name() { case "$1" in 0) echo FM;; 1) echo DV;; 2) echo AM;; 3) echo LSB;; 4) echo USB;; 5) echo CW;; 6) echo NFM;; 7) echo DR;; 8) echo WFM;; 9) echo R-CW;; *) echo "mode $1";; esac; }
-mode_num() { case "${1,,}" in fm) echo 0;; dv) echo 1;; am) echo 2;; lsb) echo 3;; usb) echo 4;; cw) echo 5;; nfm) echo 6;; dr) echo 7;; wfm) echo 8;; *) usage "mode is fm, nfm, am, dv, dr, lsb, usb, cw or wfm";; esac; }
+# TM-D750 mode codes, learned on the radio: only 0 to 3 are accepted (0 FM, 1 DV, 2 AM, 3 NFM); DR is not reachable through MD.
+mode_name() { case "$1" in 0) echo FM;; 1) echo DV;; 2) echo AM;; 3) echo NFM;; *) echo "mode $1";; esac; }
+mode_num() { case "${1,,}" in fm) echo 0;; dv) echo 1;; am) echo 2;; nfm) echo 3;; *) usage "mode is fm, nfm, am or dv";; esac; }
 power_name() { case "$1" in 0) echo high;; 1) echo mid;; 2) echo low;; 3) echo EL;; *) echo "power $1";; esac; }
 power_num() { case "${1,,}" in high|h) echo 0;; mid|medium|m) echo 1;; low|l) echo 2;; el) echo 3;; *) usage "power is high, mid, low or el";; esac; }
 tnc_name() { case "$1" in 0) echo off;; 1) echo APRS;; 2) echo KISS;; *) echo "tnc $1";; esac; }
@@ -98,7 +99,7 @@ band)
   say "control and transmit band: $(band_letter "$(field "$(body "$r")" 2)")" ;;
 
 mode)
-  [ $# -eq 2 ] || usage "mode A|B fm|nfm|am|dv|dr"; b=$(band_num "$1"); m=$(mode_num "$2")
+  [ $# -eq 2 ] || usage "mode A|B fm|nfm|am|dv"; b=$(band_num "$1"); m=$(mode_num "$2")
   r=$(set_cmd "MD $b,$m") || exit 1; [ "$DRY" = 1 ] && exit 0
   say "band $(band_letter "$b") mode: $(mode_name "$(field "$(body "$r")" 2)")" ;;
 
