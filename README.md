@@ -78,6 +78,8 @@ VX and more; d750 probe lists what your firmware answers. Three rules learned th
 - Never run the TNC with the data band's squelch wide open while menu 508 is on Busy: the TNC will not transmit.
 - Keep transmitting handhelds away from the USB leads; a bus reset takes the radio and everything else on it.
 
+Modes over MD are 0 FM, 1 NFM, 2 AM and 3 DV; the radio refuses anything above 3, so DR is not reachable this way.
+
 Hamlib's TH-D74 model talks to this radio but takes seconds to unkey, which is why d750d keys with the raw
 TX and RX commands and offers hamlib's protocol on its own port instead.
 
