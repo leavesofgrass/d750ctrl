@@ -3,6 +3,10 @@
 # Start the test bed first: ./test-env.sh. Written Saturday, November 7, 2026.
 export D750_CMD_PORT=4543 D750_PTT_PORT=4542 D750_LOG_DIR="$HOME/.local/share/d750ctrl/log/test"
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/d750ctrl-tests.XXXXXX"); trap 'rm -rf "$TMP"' EXIT
+# the tests get a settings folder of their own, so the operator's fixup.conf and call sign stay out of them
+export D750_CONF_DIR="$TMP/conf"; mkdir -p "$D750_CONF_DIR"
+printf 'TNC=2,1\nSQUELCH_B=3\nGPS_OUTPUT=0\n' > "$D750_CONF_DIR/fixup.conf"
+[ -f "$HOME/.config/d750ctrl/commands.txt" ] && cp "$HOME/.config/d750ctrl/commands.txt" "$D750_CONF_DIR/"
 pass=0; fail=0
 check() {  # check "name" "expected substring" command...
   local name=$1 want=$2; shift 2; local out

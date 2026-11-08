@@ -15,10 +15,11 @@
 #   doctor                      the health checklist          probe               which commands the radio answers
 #   lock | unlock | state | raw CMD [ARGS] | log [N|follow] | help
 # Add -n anywhere for a dry run of a verb that changes the radio. Exit 0 Pass, 1 Fail, 2 usage.
-# Settings: ~/.config/d750ctrl/d750ctrl.conf (mycall, bluetooth, cmd_port, ptt_port); D750_CMD_PORT and D750_PTT_PORT override.
+# Settings: ~/.config/d750ctrl/d750ctrl.conf (mycall, bluetooth, cmd_port, ptt_port); D750_CMD_PORT and D750_PTT_PORT override,
+#   D750_CONF_DIR points at another settings folder (the tests use one of their own).
 set -u
 HOST=127.0.0.1
-HERE=$(dirname "$(readlink -f "$0")"); CONF_DIR="$HOME/.config/d750ctrl"; SHARE="$HOME/.local/share/d750ctrl"
+HERE=$(dirname "$(readlink -f "$0")"); CONF_DIR=${D750_CONF_DIR:-$HOME/.config/d750ctrl}; SHARE="$HOME/.local/share/d750ctrl"
 TABLE="$CONF_DIR/commands.txt"; FIXCONF="$CONF_DIR/fixup.conf"; LOGDIR=${D750_LOG_DIR:-$SHARE/log}
 conf_get() { sed -nE "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*(.*)$/\1/p" "$CONF_DIR/d750ctrl.conf" 2>/dev/null | head -1; }
 RADIO_MAC=$(conf_get bluetooth); CMD_PORT=${D750_CMD_PORT:-$(conf_get cmd_port)}; CMD_PORT=${CMD_PORT:-4533}; PTT_PORT=${D750_PTT_PORT:-$(conf_get ptt_port)}; PTT_PORT=${PTT_PORT:-4532}
@@ -48,9 +49,9 @@ band_num() { case "${1^^}" in A|0) echo 0;; B|1) echo 1;; *) usage "band is A or
 band_letter() { [ "$1" = 0 ] && echo A || echo B; }
 mhz() { awk -v hz="$1" 'BEGIN { printf "%.3f", hz / 1000000 }'; }
 hz10() { awk -v m="$1" 'BEGIN { printf "%010d", m * 1000000 + 0.5 }'; }
-# TM-D750 mode codes, learned on the radio: only 0 to 3 are accepted (0 FM, 1 DV, 2 AM, 3 NFM); DR is not reachable through MD.
-mode_name() { case "$1" in 0) echo FM;; 1) echo DV;; 2) echo AM;; 3) echo NFM;; *) echo "mode $1";; esac; }
-mode_num() { case "${1,,}" in fm) echo 0;; dv) echo 1;; am) echo 2;; nfm) echo 3;; *) usage "mode is fm, nfm, am or dv";; esac; }
+# TM-D750 mode codes, learned on the radio by ear: only 0 to 3 are accepted (0 FM, 1 NFM, 2 AM, 3 DV); DR is not reachable through MD.
+mode_name() { case "$1" in 0) echo FM;; 1) echo NFM;; 2) echo AM;; 3) echo DV;; *) echo "mode $1";; esac; }
+mode_num() { case "${1,,}" in fm) echo 0;; nfm) echo 1;; am) echo 2;; dv) echo 3;; *) usage "mode is fm, nfm, am or dv";; esac; }
 power_name() { case "$1" in 0) echo high;; 1) echo mid;; 2) echo low;; 3) echo EL;; *) echo "power $1";; esac; }
 power_num() { case "${1,,}" in high|h) echo 0;; mid|medium|m) echo 1;; low|l) echo 2;; el) echo 3;; *) usage "power is high, mid, low or el";; esac; }
 tnc_name() { case "$1" in 0) echo off;; 1) echo APRS;; 2) echo KISS;; *) echo "tnc $1";; esac; }

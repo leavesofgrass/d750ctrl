@@ -41,7 +41,7 @@ import socket
 import threading
 import time
 
-CONF = os.path.expanduser("~/.config/d750ctrl/d750ctrl.conf")
+CONF = os.path.join(os.environ.get("D750_CONF_DIR") or os.path.expanduser("~/.config/d750ctrl"), "d750ctrl.conf")
 
 
 def read_conf():
@@ -99,10 +99,10 @@ CONFIG = read_conf()
 CMD_PORT = int(os.environ.get("D750_CMD_PORT", CONFIG.get("cmd_port", "4533")))
 PTT_PORT = int(os.environ.get("D750_PTT_PORT", CONFIG.get("ptt_port", "4532")))
 MYCALL = CONFIG.get("mycall", "").upper() or "N0CALL"
-# The TM-D750 answers MD with codes 0 to 3 only (tried on the radio November 8): 0 FM, 2 AM by its squelch behaviour;
-# 1 and 3 are DV and NFM. The TH-D74 table (NFM 6, DR 7) does not apply.
-MODES = {0: "FM", 1: "DV", 2: "AM", 3: "NFM"}
-MODE_CYCLE = [0, 3, 2, 1]   # m: FM, NFM, AM, DV
+# The TM-D750 answers MD with codes 0 to 3 only, learned on the radio on November 8 by ear on a weather broadcast:
+# 0 FM, 1 NFM, 2 AM, 3 DV. The TH-D74 table (DV 1, NFM 6, DR 7) does not apply; DR is not reachable through MD.
+MODES = {0: "FM", 1: "NFM", 2: "AM", 3: "DV"}
+MODE_CYCLE = [0, 1, 2, 3]   # m: FM, NFM, AM, DV
 POWER = {0: "HIGH", 1: "MID", 2: "LOW", 3: "EL"}
 TNC = {0: "off", 1: "APRS", 2: "KISS"}
 STEPS_KHZ = [5, 6.25, 10, 12.5, 15, 20, 25, 50, 100]

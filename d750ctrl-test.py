@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """d750ctrl-test: drive d750ctrl under a pseudo terminal against the simulator (test-env.sh: ports 4542/4543),
 press the keys, and check what the simulated radio ended up with and what the screen showed. Exit 0 on Pass."""
-import fcntl, os, pty, re, select, socket, struct, subprocess, sys, termios, time
+import fcntl, os, pty, tempfile, re, select, socket, struct, subprocess, sys, termios, time
 
 here = os.path.dirname(os.path.abspath(__file__))
 env_proc = subprocess.Popen(["sh", os.path.join(here, "test-env.sh")], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -11,7 +11,8 @@ def ask(line):
     s = socket.create_connection(("127.0.0.1", 4543), timeout=5); f = s.makefile("rwb", buffering=0)
     f.write((line + "\n").encode()); r = f.readline().decode().strip(); s.close(); return r
 
-env = dict(os.environ, TERM="xterm", D750_CMD_PORT="4543", D750_PTT_PORT="4542")
+conf_dir = tempfile.mkdtemp(prefix="d750ctrl-test-")   # the operator's settings stay out of the test
+env = dict(os.environ, TERM="xterm", D750_CMD_PORT="4543", D750_PTT_PORT="4542", D750_CONF_DIR=conf_dir)
 pid, fd = pty.fork()
 if pid == 0:
     os.execvpe(sys.executable, [sys.executable, os.path.join(here, "d750ctrl"), "--ascii", "--theme", "mono", "--plain"], env)
@@ -41,7 +42,7 @@ send("\x1bOA", 1.2)                                        # Up in keypad mode: 
 step(3, "Up tunes the active band one step", ask("FQ 1") == "FQ 1,0144400000")
 send("]", 1.0); step(4, "] raises the squelch", ask("SQ 1") == "SQ 1,4")
 send("p", 1.0); step(5, "p cycles the power", ask("PC 1") == "PC 1,2")
-send("m", 1.0); step(6, "m cycles the mode to NFM (code 3 on the TM-D750)", ask("MD 1") == "MD 1,3")
+send("m", 1.0); step(6, "m cycles the mode to NFM (code 1 on the TM-D750)", ask("MD 1") == "MD 1,1")
 send("b", 1.0); step(7, "b makes the band control and transmit", ask("BC") == "BC 1,1")
 send("146.520\r", 1.2); step(8, "a typed frequency tunes", ask("FQ 1") == "FQ 1,0146520000")
 send("M", 2.0)
@@ -50,7 +51,7 @@ for _ in range(60):
     pump(0.5)
 step(9, "memory browser lists channels", seen("146.520 MHz") or seen("000  "))
 send("\r", 1.0); step(10, "Enter recalls a channel into memory mode", ask("VM 1") == "VM 1,1")
-send("t", 0.6); send("n", 0.8); step(11, "t asks before changing the TNC and n leaves it", ask("TN") == "TN 2,1")
+tn_before = ask("TN"); send("t", 0.6); send("n", 0.8); step(11, "t asks before changing the TNC and n leaves it", tn_before.startswith("TN") and ask("TN") == tn_before)
 send("L", 1.0); step(12, "L locks PTT in the daemon", "locked" in ask("state") and "unlocked" not in ask("state"))
 send("L", 1.0); step(13, "L again unlocks", "unlocked" in ask("state"))
 send(":", 0.5); send("ID\r", 1.0); step(14, "a raw CAT command shows its answer", seen("ID -> ID TM-D750"))
