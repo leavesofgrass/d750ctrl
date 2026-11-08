@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- d750d speaks enough of hamlib's NET rigctl protocol for WSJT-X, fldigi, GridTracker, OpenSlot and hamlib's own
+  rigctl: the chk_vfo and dump_state handshake, f F m M v V t T s S l L, get_vfo_info, get_powerstat,
+  get_lock_mode, the long command names and the extended reply form. Before, only T (PTT) was answered and
+  hamlib's client gave up at chk_vfo. VFOA is band A, VFOB band B, the current VFO the transmit band; modes FM,
+  FMN, AM, DSTAR; levels STRENGTH, RAWSTR, RFPOWER, SQL. 15 new checks in tests.sh use hamlib's client.
 - d750ctrl: o opens openslot --tui, the VarAC-compatible chat client, in a window named varac, next to x for
   xarachat; F9 comes back to the rig screen and Ctrl-Q in openslot closes its window. openslot reads
   ~/.config/openslot/config.toml, with the xara modem on 8300 and rig_backend = "none" until d750d speaks the

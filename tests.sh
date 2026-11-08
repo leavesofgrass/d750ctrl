@@ -59,6 +59,23 @@ check "ptt key and unkey" "RPRT 0" bash -c 'printf "T 1\nT 0\n" | nc -w 2 127.0.
 check "log" "key in" d750 log 40
 check "vara status" "xara:" d750 vara status
 check "doctor runs" "pass," d750 doctor
+# hamlib's NET rigctl client against the daemon: the open handshake, then reads and writes on the transmit band (B on the simulator)
+R="rigctl -m 2 -r 127.0.0.1:4542"
+check "rigctl handshake" "done" bash -c 'printf "\\chk_vfo\n\\dump_state\n" | nc -w 2 127.0.0.1 4542'
+check "rigctl frequency" "144390000" $R f
+check "rigctl mode" "FM" $R m
+check "rigctl vfo is the transmit band" "VFOB" $R v
+check "rigctl ptt reads" "0" $R t
+check "rigctl set frequency" "FQ 1,0146520000" bash -c "$R F 146520000 && d750 raw 'FQ 1'"
+check "rigctl set mode narrow" "MD 1,1" bash -c "$R M FMN 0 && d750 raw 'MD 1'"
+check "rigctl set mode back" "MD 1,0" bash -c "$R M FM 0 && d750 raw 'MD 1'"
+check "rigctl power level" "0.5" $R l RFPOWER
+check "rigctl set power" "PC 1,2" bash -c "$R L RFPOWER 0.2 && d750 raw 'PC 1'"
+check "rigctl power back" "PC 1,1" bash -c "$R L RFPOWER 0.5 && d750 raw 'PC 1'"
+check "rigctl strength" "-54" $R l STRENGTH
+check "rigctl vfo info" "146520000" bash -c 'printf "\\\\get_vfo_info VFOB\\n" | nc -w 2 127.0.0.1 4542'
+check "rigctl extended reply" "Frequency: 146520000" bash -c 'printf "+f\n" | nc -w 2 127.0.0.1 4542'
+check "rigctl frequency back" "FQ 1,0144390000" bash -c "$R F 144390000 && d750 raw 'FQ 1'"
 check "help" "Verbs:" d750 help
 check "usage code" "unknown verb" d750 nonsense
 printf '%s pass, %s fail\n' "$pass" "$fail"; [ "$fail" = 0 ]

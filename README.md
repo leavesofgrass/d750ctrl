@@ -23,9 +23,11 @@ and the computer. Both sockets may be connected at once; the udev rule names the
 
 ## The pieces
 
-- d750d: the only process that opens the serial port. Port 4532 speaks the rigctld protocol, so xara or any
-  hamlib-aware program keys the radio through it; port 4533 takes one Kenwood command per line and returns the
-  answer. It refuses commands that key or reset the radio on 4533, unkeys on client loss and after 30 seconds,
+- d750d: the only process that opens the serial port. Port 4532 speaks hamlib's NET rigctl protocol, so xara,
+  WSJT-X, fldigi, GridTracker, OpenSlot or any other Hamlib-aware program tunes and keys the radio through it:
+  pick the rig "NET rigctl" and the address 127.0.0.1:4532. VFOA is band A, VFOB band B and the current VFO the
+  band that transmits; modes FM, FMN, AM and DSTAR; levels STRENGTH, RAWSTR, RFPOWER and SQL. Port 4533 takes one
+  Kenwood command per line and returns the answer. It refuses commands that key or reset the radio on 4533, unkeys on client loss and after 30 seconds,
   and logs every exchange under ~/.local/share/d750ctrl/log.
 - d750: the verbs. status, freq, band, mode, squelch, power, busy, watch, tnc, vara, fixup, mem, gps, vox,
   clock, level, record, ptt off, doctor, probe, log, lock, unlock, raw. Add -n for a dry run of anything that
