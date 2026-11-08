@@ -6,3 +6,8 @@ bluetooth =
 # d750d's ports: rigctld-style PTT for xara, and the command line protocol for the d750 tools.
 ptt_port = 4532
 cmd_port = 4533
+# d750ctrl runs inside tmux when it is installed, each tool in a window of its own. workspace = no turns that off.
+workspace = yes
+# Keys tmux binds while the workspace runs: back to the rig screen, and step to the next window. tmux key names.
+rig_key = F9
+next_key = F12

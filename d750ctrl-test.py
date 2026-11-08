@@ -14,7 +14,7 @@ def ask(line):
 env = dict(os.environ, TERM="xterm", D750_CMD_PORT="4543", D750_PTT_PORT="4542")
 pid, fd = pty.fork()
 if pid == 0:
-    os.execvpe(sys.executable, [sys.executable, os.path.join(here, "d750ctrl"), "--ascii", "--theme", "mono"], env)
+    os.execvpe(sys.executable, [sys.executable, os.path.join(here, "d750ctrl"), "--ascii", "--theme", "mono", "--plain"], env)
 fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
 screen = b""
 def pump(seconds):

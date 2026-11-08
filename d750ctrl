@@ -19,15 +19,21 @@ Keys, also under ?:
   L          lock or unlock PTT in d750d     u          unkey now
   c          one CQ frame through xara       k          set the radio clock from this computer
   :          a raw CAT command               ?          help        q quit
-  x          xarachat, VARA keyboard chat    r          radiogram new, NTS traffic
+  x          chat window: xarachat over VARA r          radiogram new, NTS traffic
   S          SSTV: receive, or send a picture (d750-sstv)
   R          RTTY: receive, or send a line of text (d750-rtty)
-The tools under x, r, S and R take over the terminal and hand it back when they finish.
+Each tool opens in a window of its own and keeps running while you tune. F9 brings this rig screen
+back from any window, F12 steps through the windows, and the same letter jumps to a window that is
+already open. A tool's quit key (F10 in xarachat) closes its window. Without tmux, or with --plain,
+a tool takes over the terminal and hands it back when it ends.
 Written Sunday, November 8, 2026. MIT.
 """
 import argparse
 import os
+import shlex
+import shutil
 import subprocess
+import sys
 os.environ.setdefault("ESCDELAY", "25")  # arrow keys arrive as escape sequences; do not wait a second for them
 import curses
 import queue
@@ -48,6 +54,45 @@ def read_conf():
     except OSError:
         pass
     return conf
+
+
+TMUX_SOCKET = "d750"   # a tmux server of its own, so nothing here touches the operator's other tmux sessions
+SESSION = "d750"
+
+
+def tmux(*args, capture=False):
+    cmd = ["tmux", "-L", TMUX_SOCKET, *args]
+    if capture:
+        return subprocess.run(cmd, capture_output=True, text=True).stdout
+    return subprocess.call(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def tmux_windows():
+    return tmux("list-windows", "-t", SESSION, "-F", "#W", capture=True).split()
+
+
+def workspace_start(conf):
+    """Run this screen inside its own tmux session so each tool gets a window of its own and keeps
+    running while the operator tunes. Returns only when tmux cannot be used; the caller then runs plainly."""
+    if shutil.which("tmux") is None or not sys.stdout.isatty():
+        return
+    cmd = shlex.join([sys.executable, os.path.abspath(sys.argv[0]), *sys.argv[1:], "--inside"])
+    rig_key, next_key = conf.get("rig_key") or "F9", conf.get("next_key") or "F12"
+    if tmux("has-session", "-t", SESSION) == 0:
+        if "rig" not in tmux_windows():
+            tmux("new-window", "-t", SESSION, "-n", "rig", cmd)
+        tmux("select-window", "-t", f"{SESSION}:rig")
+    else:
+        if tmux("new-session", "-d", "-s", SESSION, "-n", "rig", cmd) != 0:
+            return
+        for opt in (("status-left", "d750 windows: "), ("status-left-length", "16"), ("status-right", ""),
+                    ("window-status-format", "#I #W"), ("window-status-current-format", "[#I #W]"),
+                    ("window-status-separator", "  "), ("status-style", "default"), ("escape-time", "25"),
+                    ("mouse", "off"), ("allow-rename", "off"), ("automatic-rename", "off"), ("set-titles", "off")):
+            tmux("set-option", "-g", *opt)
+        tmux("bind-key", "-n", rig_key, "select-window", "-t", f"{SESSION}:rig")
+        tmux("bind-key", "-n", next_key, "next-window")
+    os.execvp("tmux", ["tmux", "-L", TMUX_SOCKET, "attach-session", "-t", SESSION])
 
 
 CONFIG = read_conf()
@@ -153,6 +198,10 @@ class Ctl:
         self.ident = ""
         self.step_i = STEPS_KHZ.index(args.step) if args.step in STEPS_KHZ else 2
         self.typing = None      # (prompt, buffer, handler)
+        cf = read_conf()
+        self.ws = bool(getattr(args, "inside", False))   # inside the tmux workspace: tools get windows of their own
+        self.windows = []                               # tool windows open right now
+        self.rig_key, self.next_key = cf.get("rig_key") or "F9", cf.get("next_key") or "F12"
         self.message = ""
         self.mode = "main"      # main, memory, help
         self.memories = []      # (channel, hz, mode, offset_hz)
@@ -208,6 +257,11 @@ class Ctl:
                 self.vox = int(vx.split()[1]) if vx.startswith("VX ") else None
             except Exception as e:  # noqa: BLE001
                 self.message = f"poll: {e}"
+            if self.ws:
+                self.wtick = getattr(self, "wtick", 0) + 1
+                if self.wtick % 5 == 1:
+                    try: self.windows = [w for w in tmux_windows() if w != "rig"]
+                    except OSError: pass
             time.sleep(0.4)
 
     # ---- actions ----
@@ -273,7 +327,10 @@ class Ctl:
                 self.mode = "main"
             elif k == ord("R"): self.load_memories()
             return
-        if k == ord("q"): self.quit = True
+        if k == ord("q"):
+            if self.ws and self.windows:
+                self.typing = (f"Windows still open: {' '.join(self.windows)}. y closes everything, n quits just this screen. y/n", "", self.quit_ws)
+            else: self.quit = True
         elif k == ord("?"): self.mode = "help"
         elif k == 9: self.active ^= 1
         elif k == curses.KEY_UP: self.step(+1)
@@ -310,15 +367,39 @@ class Ctl:
             self.typing = ("Set the radio clock from this computer? y/n", "", lambda v: self.clock() if v.lower().startswith("y") else self.say("clock unchanged"))
         elif k == ord(":"):
             self.typing = ("CAT:", "", lambda v: self.say(f"{v} -> {self.d.set(v)}") if v.strip() else None)
-        elif k == ord("x"): self.run_external(["xarachat", "--tui"], pause_after=False)
-        elif k == ord("r"): self.run_external(["radiogram", "new"])
+        elif k == ord("x"): self.run_external(["xarachat", "--tui"], pause_after=False, name="chat")
+        elif k == ord("r"): self.run_external(["radiogram", "new"], name="radiogram")
         elif k == ord("S"): self.sstv_menu()
         elif k == ord("R"): self.rtty_menu()
         elif 48 <= k <= 57 or k == ord("."):
             self.typing = ("Frequency MHz:", chr(k), self.typed_frequency)
 
-    def run_external(self, argv, pause_after=True):
-        """Hand the terminal to another program, then take it back."""
+    def ws_text(self):
+        if not self.ws or not self.windows: return ""
+        return f"  | windows open: {' '.join(self.windows)} ({self.rig_key} rig, {self.next_key} next)"
+
+    def quit_ws(self, v):
+        if v.lower().startswith("y"):
+            self.quit = True; tmux("kill-server")
+        else:
+            self.say("leaving the other windows; run d750ctrl again to get this screen back"); self.quit = True
+
+    def run_external(self, argv, pause_after=True, name=None):
+        """Run another program: in a window of its own when this screen runs in the tmux workspace,
+        otherwise in this terminal, taking it back when the program ends."""
+        name = name or os.path.basename(argv[0]).replace("d750-", "")
+        if self.ws:
+            if name in tmux_windows():
+                tmux("select-window", "-t", f"{SESSION}:{name}")
+                self.say(f"{name} window; {self.rig_key} comes back here"); return
+            cmd = shlex.join(argv)
+            if pause_after:
+                cmd += f"; printf '\\n--- done. Enter closes this window; {self.rig_key} is the rig screen ---\\n'; read _"
+            if tmux("new-window", "-t", SESSION, "-n", name, cmd) == 0:
+                self.say(f"{name} opened in its own window; {self.rig_key} comes back here, {self.next_key} steps through the windows")
+            else:
+                self.say(f"could not open a window for {name}")
+            return
         curses.def_prog_mode(); curses.endwin()
         try:
             print(f"\n--- {' '.join(argv)} ---", flush=True)
@@ -452,7 +533,7 @@ class Ctl:
         # key bar, message, input
         keys = " Tab band  Up/Dn tune  s step  [ ] squelch  p power  m mode  b ctrl/tx  v vfo/mem  M mem  t tnc  g gps  L lock  u unkey  c cq  k clock  : cat  x chat  r radiogram  S sstv  R rtty  ? help  q quit"
         self.scr.addnstr(h - 3, 0, keys[:w - 1].ljust(w - 1), w - 1, self.c("bar"))
-        self.scr.addnstr(h - 2, 0, (self.message or self.state)[:w - 1], w - 1)
+        self.scr.addnstr(h - 2, 0, (self.message or self.state + self.ws_text())[:w - 1], w - 1)
         if self.typing is not None:
             prompt, buf, _ = self.typing
             self.scr.addnstr(h - 1, 0, f"{prompt} {buf}"[:w - 1], w - 1, curses.A_BOLD)
@@ -487,11 +568,16 @@ def main():
     ap.add_argument("--ascii", action="store_true", help="plain characters instead of block digits")
     ap.add_argument("--theme", default="dark", choices=["dark", "mono"])
     ap.add_argument("--step", type=float, default=10, help="tuning step in kHz: 5, 6.25, 10, 12.5, 15, 20, 25, 50, 100")
+    ap.add_argument("--plain", action="store_true", help="this terminal only, no tmux windows: a tool takes the terminal over and hands it back")
+    ap.add_argument("--inside", action="store_true", help=argparse.SUPPRESS)
     a = ap.parse_args()
     try:
         socket.create_connection(("127.0.0.1", CMD_PORT), timeout=3).close()
     except OSError:
         print(f"Fail: d750d is not answering on 127.0.0.1:{CMD_PORT} (systemctl --user status d750d)"); return 1
+    conf = read_conf()
+    if not a.inside and not a.plain and (conf.get("workspace") or "yes").lower() not in ("no", "off", "0", "false"):
+        workspace_start(conf)   # comes back only when tmux cannot be used
     curses.wrapper(lambda scr: Ctl(scr, a).run())
     return 0
 
