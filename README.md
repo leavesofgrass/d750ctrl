@@ -32,8 +32,8 @@ and the computer. Both sockets may be connected at once; the udev rule names the
   changes the radio. Exit 0 Pass, 1 Fail, 2 usage.
 - d750ctrl: the screen. Both bands, the active band in big digits, tuning by step or typed frequency, squelch,
   power, mode, VFO or memory, a memory browser read from the radio, TNC, GPS output, PTT lock, unkey, one CQ
-  frame through xara, the radio clock, raw CAT, a scrolling CAT log; x, r, S and R open xarachat, radiogram,
-  SSTV and RTTY in windows of their own (see Jumping between modes).
+  frame through xara, the radio clock, raw CAT, a scrolling CAT log; x, o, r, S and R open xarachat, openslot
+  (VarAC chat), radiogram, SSTV and RTTY in windows of their own (see Jumping between modes).
 - d750-sstv and d750-rtty: send and receive through the radio's sound card, keyed through d750d, with xara
   paused meanwhile. SSTV uses the sstv Python package; RTTY uses rttymodem.py, a Baudot modem written here.
 - probe.py: asks the radio, read only, which commands it answers and writes the table the verbs rely on.
@@ -43,11 +43,12 @@ and the computer. Both sockets may be connected at once; the udev rule names the
 ## Jumping between modes
 
 When tmux is installed, d750ctrl starts itself inside tmux, on a tmux server of its own, so your other tmux
-sessions are untouched. The rig screen is window 0, named rig. x opens xarachat in a window named chat, r a
-radiogram, S and R the SSTV and RTTY tools. Each keeps running while you tune, so a chat link stays up. F9
-brings the rig screen back from anywhere, F12 steps through the open windows, and the same letter jumps to a
-window that is already open instead of starting a second copy. The rig screen's message line and the bottom
-tmux line list the open windows. A tool's own quit key (F10 in xarachat) closes its window, and q on the rig
+sessions are untouched. The rig screen is window 0, named rig. x opens xarachat in a window named chat, o
+openslot's terminal client (VarAC chat) in a window named varac, r a radiogram, S and R the SSTV and RTTY
+tools. Each keeps running while you tune, so a chat link stays up. F9 brings the rig screen back from
+anywhere, F12 steps through the open windows, and the same letter jumps to a window that is already open
+instead of starting a second copy. The rig screen's message line and the bottom tmux line list the open
+windows. A tool's own quit key (F10 in xarachat, Ctrl-Q in openslot) closes its window, and q on the rig
 screen asks whether to close the other windows too. Change the keys with rig_key and next_key in the settings
 file. d750ctrl --plain, or workspace = no, gives the old way: a tool takes over the terminal and hands it
 back when it ends. The tmux prefix, Ctrl-b, works as usual.

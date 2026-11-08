@@ -20,12 +20,13 @@ Keys, also under ?:
   c          one CQ frame through xara       k          set the radio clock from this computer
   :          a raw CAT command               ?          help        q quit
   x          chat window: xarachat over VARA r          radiogram new, NTS traffic
+  o          VarAC chat window: openslot --tui, the VarAC-compatible client
   S          SSTV: receive, or send a picture (d750-sstv)
   R          RTTY: receive, or send a line of text (d750-rtty)
 Each tool opens in a window of its own and keeps running while you tune. F9 brings this rig screen
 back from any window, F12 steps through the windows, and the same letter jumps to a window that is
-already open. A tool's quit key (F10 in xarachat) closes its window. Without tmux, or with --plain,
-a tool takes over the terminal and hands it back when it ends.
+already open. A tool's quit key (F10 in xarachat, Ctrl-Q in openslot) closes its window. Without tmux,
+or with --plain, a tool takes over the terminal and hands it back when it ends.
 Written Sunday, November 8, 2026. MIT.
 """
 import argparse
@@ -370,6 +371,7 @@ class Ctl:
         elif k == ord(":"):
             self.typing = ("CAT:", "", lambda v: self.say(f"{v} -> {self.d.set(v)}") if v.strip() else None)
         elif k == ord("x"): self.run_external(["xarachat", "--tui"], pause_after=False, name="chat")
+        elif k == ord("o"): self.run_external(["openslot", "--tui"], pause_after=False, name="varac")
         elif k == ord("r"): self.run_external(["radiogram", "new"], name="radiogram")
         elif k == ord("S"): self.sstv_menu()
         elif k == ord("R"): self.rtty_menu()
@@ -519,7 +521,7 @@ class Ctl:
             if not self.memories:
                 self.scr.addnstr(3, 2, "reading..." if not self.mem_loaded else "no channels found", w - 4)
         elif self.mode == "help":
-            help_lines = __doc__.strip().splitlines()[9:27]
+            help_lines = __doc__.strip().splitlines()[9:28]
             for i, line in enumerate(help_lines):
                 self.scr.addnstr(2 + i, 1, line, w - 2)
             self.scr.addnstr(2 + len(help_lines) + 1, 1, "any key returns", w - 2, curses.A_BOLD)
@@ -533,7 +535,7 @@ class Ctl:
             for i, (t, cmd, rep) in enumerate(self.d.log[-rows:]):
                 self.scr.addnstr(top + 1 + i, 0, f"{t} > {cmd:<22} < {rep}", w - 1)
         # key bar, message, input
-        keys = " Tab band  Up/Dn tune  s step  [ ] squelch  p power  m mode  b ctrl/tx  v vfo/mem  M mem  t tnc  g gps  L lock  u unkey  c cq  k clock  : cat  x chat  r radiogram  S sstv  R rtty  ? help  q quit"
+        keys = " Tab band  Up/Dn tune  s step  [ ] squelch  p power  m mode  b ctrl/tx  v vfo/mem  M mem  t tnc  g gps  L lock  u unkey  c cq  k clock  : cat  x chat  o varac  r radiogram  S sstv  R rtty  ? help  q quit"
         self.scr.addnstr(h - 3, 0, keys[:w - 1].ljust(w - 1), w - 1, self.c("bar"))
         self.scr.addnstr(h - 2, 0, (self.message or self.state + self.ws_text())[:w - 1], w - 1)
         if self.typing is not None:

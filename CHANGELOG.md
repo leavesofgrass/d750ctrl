@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- d750ctrl: o opens openslot --tui, the VarAC-compatible chat client, in a window named varac, next to x for
+  xarachat; F9 comes back to the rig screen and Ctrl-Q in openslot closes its window. openslot reads
+  ~/.config/openslot/config.toml, with the xara modem on 8300 and rig_backend = "none" until d750d speaks the
+  full rigctld handshake.
+
 ## 0.1.0, Sunday, November 8, 2026
 
 First release.
