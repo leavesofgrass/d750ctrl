@@ -1,0 +1,7 @@
+#!/bin/sh
+# d750-rtty: send and receive Baudot RTTY (45.45 baud, 170 Hz shift) through the TM-D750, keyed through d750d.
+#   d750-rtty rx [SECONDS]        listen for SECONDS (default 60), print the decoded text, keep it in ~/.local/share/d750ctrl/rtty/
+#   d750-rtty tx "TEXT"           pause xara, key the radio, send the text, unkey, resume xara
+# Options anywhere: --no-key, --sink NAME, --source NAME, --baud 50, --shift 450, --reverse.
+here=$(dirname "$(readlink -f "$0")")
+exec "$here/.venv/bin/python" "$here/d750-rtty.py" "$@"

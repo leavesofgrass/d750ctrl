@@ -1,0 +1,10 @@
+#!/bin/sh
+# d750-sstv: send and receive SSTV through the TM-D750's sound card, keyed through d750d.
+#   d750-sstv rx [SECONDS]              record the radio for SECONDS (default 150), decode every image found,
+#                                       save them under ~/.local/share/d750ctrl/sstv/, print their paths and modes
+#   d750-sstv tx IMAGE [MODE]           pause xara, key the radio, send the image, unkey, resume xara
+#                                       MODE: ROBOT_36 (default, 37 s), MARTIN_1, SCOTTIE_1, PD_120, ...; d750-sstv modes lists them
+#   d750-sstv modes
+# Options anywhere: --no-key (no PTT, for tests), --sink NAME, --source NAME (other audio devices).
+here=$(dirname "$(readlink -f "$0")")
+exec "$here/.venv/bin/python" "$here/d750-sstv.py" "$@"

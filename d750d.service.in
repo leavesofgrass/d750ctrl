@@ -1,0 +1,13 @@
+[Unit]
+Description=d750d: owner of the Kenwood TM-D750 serial port (PTT on 4532, commands on 4533)
+After=default.target
+Before=xara.service
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/python3 -I @REPO@/d750d.py
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,264 @@
+#!/bin/bash
+# d750: control and configure the Kenwood TM-D750 through d750d. Plain lines, the answer first.
+# Verbs:
+#   status                      both bands, transmit band, TNC, squelch, power, daemon state
+#   freq A|B MHZ                set a band's frequency        band A|B            control and transmit band
+#   mode A|B fm|nfm|am|dv|dr    set a band's mode             squelch A|B 0-9     squelch level
+#   power A|B high|mid|low|el   output power                  busy A|B            squelch open or closed now
+#   watch A|B [SECONDS]         busy once a second            tnc off|aprs|kiss [A|B]   TNC mode by command
+#   vara fm|hf|off|status|cq    xara's mode, state, one CQ    fixup               put back what the box relies on
+#   mem list [FROM TO]          memory channels               mem show N          one channel, field by field
+#   mem goto A|B N              recall a channel              mem export FILE [FROM TO] | mem import FILE
+#   gps [output off|on]         GPS and its PC output         vox [on|off]        VOX state
+#   clock [set]                 radio clock, set from this computer level [SECONDS]     receive level, dBFS
+#   record SECONDS FILE [rx|tx] record the data path to wav   ptt off             unkey now
+#   doctor                      the health checklist          probe               which commands the radio answers
+#   lock | unlock | state | raw CMD [ARGS] | log [N|follow] | help
+# Add -n anywhere for a dry run of a verb that changes the radio. Exit 0 Pass, 1 Fail, 2 usage.
+# Settings: ~/.config/d750ctrl/d750ctrl.conf (mycall, bluetooth, cmd_port, ptt_port); D750_CMD_PORT and D750_PTT_PORT override.
+set -u
+HOST=127.0.0.1
+HERE=$(dirname "$(readlink -f "$0")"); CONF_DIR="$HOME/.config/d750ctrl"; SHARE="$HOME/.local/share/d750ctrl"
+TABLE="$CONF_DIR/commands.txt"; FIXCONF="$CONF_DIR/fixup.conf"; LOGDIR=${D750_LOG_DIR:-$SHARE/log}
+conf_get() { sed -nE "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*(.*)$/\1/p" "$CONF_DIR/d750ctrl.conf" 2>/dev/null | head -1; }
+RADIO_MAC=$(conf_get bluetooth); CMD_PORT=${D750_CMD_PORT:-$(conf_get cmd_port)}; CMD_PORT=${CMD_PORT:-4533}; PTT_PORT=${D750_PTT_PORT:-$(conf_get ptt_port)}; PTT_PORT=${PTT_PORT:-4532}
+DRY=0; args=(); for a in "$@"; do [ "$a" = "-n" ] && DRY=1 || args+=("$a"); done; set -- "${args[@]+"${args[@]}"}"
+
+say() { printf '%s\n' "$*"; }
+fail() { say "Fail: $*" >&2; exit 1; }
+usage() { say "usage: d750 $*" >&2; exit 2; }
+tcp() {  # tcp PORT LINE -> one answer line
+  local reply
+  exec 3<>"/dev/tcp/$HOST/$1" 2>/dev/null || { printf 'ERR d750d is not answering on %s:%s (systemctl --user status d750d)\n' "$HOST" "$1"; return 1; }
+  printf '%s\n' "$2" >&3
+  IFS= read -r -t 6 reply <&3 || reply="ERR no answer from the daemon"
+  exec 3>&- 3<&-
+  printf '%s\n' "$reply"
+}
+ask() { tcp "$CMD_PORT" "$1"; }
+set_cmd() {  # set_cmd CMD : honours the dry run, prints the answer, fails on ERR or N
+  local r
+  if [ "$DRY" = 1 ]; then say "would send: $1" >&2; return 0; fi
+  r=$(ask "$1"); case "$r" in ERR*) fail "$r";; N|"?") fail "the radio refused: $1 -> $r";; esac
+  printf '%s\n' "$r"
+}
+field() { printf '%s' "$1" | cut -d, -f"$2"; }           # comma field of an answer body
+body() { printf '%s' "${1#* }"; }                        # strip the two letter command
+band_num() { case "${1^^}" in A|0) echo 0;; B|1) echo 1;; *) usage "band is A or B";; esac; }
+band_letter() { [ "$1" = 0 ] && echo A || echo B; }
+mhz() { awk -v hz="$1" 'BEGIN { printf "%.3f", hz / 1000000 }'; }
+hz10() { awk -v m="$1" 'BEGIN { printf "%010d", m * 1000000 + 0.5 }'; }
+mode_name() { case "$1" in 0) echo FM;; 1) echo DV;; 2) echo AM;; 3) echo LSB;; 4) echo USB;; 5) echo CW;; 6) echo NFM;; 7) echo DR;; 8) echo WFM;; 9) echo R-CW;; *) echo "mode $1";; esac; }
+mode_num() { case "${1,,}" in fm) echo 0;; dv) echo 1;; am) echo 2;; lsb) echo 3;; usb) echo 4;; cw) echo 5;; nfm) echo 6;; dr) echo 7;; wfm) echo 8;; *) usage "mode is fm, nfm, am, dv, dr, lsb, usb, cw or wfm";; esac; }
+power_name() { case "$1" in 0) echo high;; 1) echo mid;; 2) echo low;; 3) echo EL;; *) echo "power $1";; esac; }
+power_num() { case "${1,,}" in high|h) echo 0;; mid|medium|m) echo 1;; low|l) echo 2;; el) echo 3;; *) usage "power is high, mid, low or el";; esac; }
+tnc_name() { case "$1" in 0) echo off;; 1) echo APRS;; 2) echo KISS;; *) echo "tnc $1";; esac; }
+note_unverified() {  # warn when the probe found the command unknown, or has never run
+  local c=${1%% *}
+  [ -r "$TABLE" ] || { say "note: $c not yet verified on this radio; run d750 probe when it is plugged in"; return; }
+  grep -qE "^$c(\s|\t).*unknown to the radio" "$TABLE" && say "note: the probe found $c unknown to this radio"
+}
+radio_source() { pactl list short sources 2>/dev/null | awk '/TM-D750/ && !/monitor/{print $2; exit}'; }
+radio_sink() { pactl list short sinks 2>/dev/null | awk '/TM-D750/{print $2; exit}'; }
+
+cmd=${1:-help}; shift || true
+case "$cmd" in
+help|-h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//' ;;
+state) ask state ;;
+lock|unlock) ask "$cmd" ;;
+raw) [ $# -ge 1 ] || usage "raw CMD [ARGS]"; r=$(ask "$*"); say "$r"; [[ $r == ERR* ]] && exit 1 ;;
+probe) exec python3 -I "$HERE/probe.py" "$@" ;;
+log)
+  f="$LOGDIR/d750d-$(date +%F).txt"; [ -r "$f" ] || fail "no daemon log yet for today"
+  if [ "${1:-}" = follow ]; then exec tail -n 5 -f "$f"; else tail -n "${1:-20}" "$f"; fi ;;
+
+status)
+  st=$(ask state); [[ $st == ERR* ]] && fail "$st"
+  bc=$(ask BC); [[ $bc == ERR* ]] && { say "radio: not answering ($bc)"; say "daemon: $st"; exit 1; }
+  ctl=$(field "$(body "$bc")" 1); tx=$(field "$(body "$bc")" 2)
+  for b in 0 1; do
+    fq=$(ask "FQ $b"); md=$(ask "MD $b"); sq=$(ask "SQ $b"); by=$(ask "BY $b"); pc=$(ask "PC $b")
+    hz=$(field "$(body "$fq")" 2); m=$(field "$(body "$md")" 2); s=$(field "$(body "$sq")" 2); busy=$(field "$(body "$by")" 2)
+    p=""; [[ $pc == PC* ]] && p=", power $(power_name "$(field "$(body "$pc")" 2)")"
+    flags=""; [ "$tx" = "$b" ] && flags="$flags, transmits"; [ "$ctl" = "$b" ] && flags="$flags, control"
+    say "band $(band_letter "$b"): $(mhz "$hz") MHz, $(mode_name "$m"), squelch $s, $([ "$busy" = 1 ] && echo busy || echo quiet)$p$flags"
+  done
+  tn=$(ask TN); say "tnc: $(tnc_name "$(field "$(body "$tn")" 1)") on band $(band_letter "$(field "$(body "$tn")" 2)")"
+  say "daemon: $st" ;;
+
+freq)
+  [ $# -eq 2 ] || usage "freq A|B MHZ"; b=$(band_num "$1"); hz=$(hz10 "$2")
+  before=$(ask "FQ $b"); say "before: band $(band_letter "$b") $(mhz "$(field "$(body "$before")" 2)") MHz"
+  r=$(set_cmd "FQ $b,$hz") || exit 1; [ "$DRY" = 1 ] && exit 0
+  say "after: band $(band_letter "$b") $(mhz "$(field "$(body "$r")" 2)") MHz" ;;
+
+band)
+  [ $# -eq 1 ] || usage "band A|B"; b=$(band_num "$1")
+  r=$(set_cmd "BC $b,$b") || exit 1; [ "$DRY" = 1 ] && exit 0
+  say "control and transmit band: $(band_letter "$(field "$(body "$r")" 2)")" ;;
+
+mode)
+  [ $# -eq 2 ] || usage "mode A|B fm|nfm|am|dv|dr"; b=$(band_num "$1"); m=$(mode_num "$2")
+  r=$(set_cmd "MD $b,$m") || exit 1; [ "$DRY" = 1 ] && exit 0
+  say "band $(band_letter "$b") mode: $(mode_name "$(field "$(body "$r")" 2)")" ;;
+
+squelch)
+  [ $# -eq 2 ] || usage "squelch A|B 0-9"; b=$(band_num "$1"); [[ $2 =~ ^[0-9]$ ]] || usage "squelch level is 0 to 9"
+  r=$(set_cmd "SQ $b,$2") || exit 1; [ "$DRY" = 1 ] && exit 0
+  say "band $(band_letter "$b") squelch: $(field "$(body "$r")" 2)" ;;
+
+power)
+  [ $# -eq 2 ] || usage "power A|B high|mid|low|el"; b=$(band_num "$1"); p=$(power_num "$2"); note_unverified PC
+  r=$(set_cmd "PC $b,$p") || exit 1; [ "$DRY" = 1 ] && exit 0
+  say "band $(band_letter "$b") power: $(power_name "$(field "$(body "$r")" 2)")" ;;
+
+busy)
+  [ $# -eq 1 ] || usage "busy A|B"; b=$(band_num "$1"); r=$(ask "BY $b"); [[ $r == ERR* ]] && fail "$r"
+  say "band $(band_letter "$b"): $([ "$(field "$(body "$r")" 2)" = 1 ] && echo busy || echo quiet)" ;;
+
+watch)
+  [ $# -ge 1 ] || usage "watch A|B [SECONDS]"; b=$(band_num "$1"); n=${2:-30}; opens=0
+  say "band $(band_letter "$b") busy state once a second for $n s; a line only when it changes"
+  last=""; for ((i = 0; i < n; i++)); do r=$(ask "BY $b"); v=$(field "$(body "$r")" 2); [ "$v" = 1 ] && [ "$last" != 1 ] && opens=$((opens + 1)); [ "$v" != "$last" ] && say "$(date +%H:%M:%S) $([ "$v" = 1 ] && echo busy || echo quiet)"; last=$v; sleep 1; done
+  say "squelch opened $opens times in $n s" ;;
+
+tnc)
+  [ $# -ge 1 ] || usage "tnc off|aprs|kiss [A|B]"
+  case "${1,,}" in off) m=0;; aprs) m=1;; kiss) m=2;; *) usage "tnc off|aprs|kiss [A|B]";; esac
+  cur=$(ask TN); b=${2:+$(band_num "$2")}; b=${b:-$(field "$(body "$cur")" 2)}
+  say "before: $(tnc_name "$(field "$(body "$cur")" 1)") on band $(band_letter "$(field "$(body "$cur")" 2)")"
+  r=$(set_cmd "TN $m,$b") || exit 1; [ "$DRY" = 1 ] && exit 0
+  say "after: $(tnc_name "$(field "$(body "$r")" 1)") on band $(band_letter "$(field "$(body "$r")" 2)")"
+  [ "$m" = 2 ] && say "KISS mode: the radio's own APRS screen is off; this computer reads the TNC over Bluetooth" ;;
+
+vara)
+  conf="$HOME/.config/xara/xara.conf"; [ $# -ge 1 ] || usage "vara fm|hf|off|status|cq"
+  case "${1,,}" in
+    fm|hf)
+      [ -w "$conf" ] || fail "no $conf"
+      if [ "$DRY" = 1 ]; then say "would set xara to ${1^^} in $conf and restart xara"; exit 0; fi
+      if [ "${1,,}" = fm ]; then sed -i -E 's/^hf = /# hf = /; s/^# ?fm = /fm = /' "$conf"; else sed -i -E 's/^fm = /# fm = /; s/^# ?hf = /hf = /' "$conf"; fi
+      grep -qE '^(fm|hf) = ' "$conf" || fail "no active fm or hf line left in $conf; fix it by hand"
+      systemctl --user restart xara.service; sleep 4
+      line=$(journalctl --user -u xara --since '-15s' --no-pager -o cat | grep -E '^xara [0-9.]+: ' | tail -1)
+      say "${line:-xara gave no mode line yet}"; say "xara: $(systemctl --user is-active xara.service)" ;;
+    off) [ "$DRY" = 1 ] && { say "would stop xara"; exit 0; }; systemctl --user stop xara.service; say "xara: $(systemctl --user is-active xara.service)" ;;
+    status)
+      say "xara: $(systemctl --user is-active xara.service)"; grep -E '^(fm|hf|ptt|ptt-lead-ms|drive-db) = ' "$conf" 2>/dev/null | sed 's/^/  /'
+      say "ports: $(ss -ltnH | awk '{print $4}' | grep -E ':(8300|8100|8310)$' | sed 's/0.0.0.0://' | paste -sd' ' -)"
+      f="$LOGDIR/d750d-$(date +%F).txt"; [ -r "$f" ] && say "last keying: $(grep -E ' key in ' "$f" | tail -1)" ;;
+    cq)
+      systemctl --user is-active --quiet xara.service || fail "xara is not running"
+      bc=$(ask BC); tx=$(field "$(body "$bc")" 2); fq=$(ask "FQ $tx"); hz=$(field "$(body "$fq")" 2)
+      say "transmit band $(band_letter "$tx") at $(mhz "$hz") MHz"
+      [ "$DRY" = 1 ] && { say "would send one CQ frame through xara"; exit 0; }
+      (printf 'CQFRAME KD7SWH\r'; sleep 6) | nc -w 3 127.0.0.1 8300 | tr '\r' '\n' | grep -E 'PTT|OK|PENDING' | paste -sd' ' - | sed 's/^/xara: /'
+      sleep 1; f="$LOGDIR/d750d-$(date +%F).txt"; grep -E ' key in | unkey in ' "$f" | tail -2 | sed 's/^/daemon: /' ;;
+    *) usage "vara fm|hf|off|status|cq" ;;
+  esac ;;
+
+fixup)
+  mkdir -p "$(dirname "$FIXCONF")"
+  if [ ! -f "$FIXCONF" ]; then cat > "$FIXCONF" <<'CONF'
+# d750 fixup: what the box relies on, restored after a power cycle. KEY=VALUE, no spaces around =.
+TNC=2,1          # TNC mode,band: 2 KISS on band B
+SQUELCH_B=3      # data band squelch; never 0 while menu 508 is on Busy, or the TNC will not transmit
+GPS_OUTPUT=0     # GPS sentences to the PC port: 0 off, which menu 403 Off also does
+CONF
+    say "wrote defaults to $FIXCONF; edit it to taste"; fi
+  tnc_want=$(sed -nE 's/^TNC=([0-9],[0-9]).*/\1/p' "$FIXCONF"); sq_want=$(sed -nE 's/^SQUELCH_B=([0-9]).*/\1/p' "$FIXCONF"); gps_want=$(sed -nE 's/^GPS_OUTPUT=([01]).*/\1/p' "$FIXCONF")
+  st=$(ask state); [[ $st == ERR* ]] && fail "$st"; id=$(ask ID); [[ $id == ID* ]] || fail "radio not answering: $id"
+  say "Pass: radio answers $id"
+  cur=$(body "$(ask TN)"); if [ "$cur" = "$tnc_want" ]; then say "Pass: tnc $(tnc_name "${cur%,*}") on band $(band_letter "${cur#*,}")"; else set_cmd "TN $tnc_want" >/dev/null && say "Fixed: tnc now $tnc_want (was $cur)"; fi
+  cur=$(field "$(body "$(ask 'SQ 1')")" 2); if [ "$cur" = "$sq_want" ]; then say "Pass: band B squelch $cur"; else set_cmd "SQ 1,$sq_want" >/dev/null && say "Fixed: band B squelch $sq_want (was $cur)"; fi
+  gp=$(ask GP); if [[ $gp == GP* ]]; then on=$(field "$(body "$gp")" 1); out=$(field "$(body "$gp")" 2); if [ "$out" = "$gps_want" ]; then say "Pass: GPS $([ "$on" = 1 ] && echo on || echo off), PC output $([ "$out" = 1 ] && echo on || echo off)"; else set_cmd "GP $on,$gps_want" >/dev/null && say "Fixed: GPS PC output now $gps_want (was $out)"; fi; else say "note: GP not answered ($gp); check menu 403 by hand"; fi
+  case "$st" in *"unsolicited bytes seen 0"*) say "Pass: nothing unsolicited on the CAT port";; *) say "Warn: ${st##*; }; something streams on the CAT port (menu 403 or 982)";; esac
+  [ -n "$(radio_source)" ] && say "Pass: sound card present" || say "Warn: the radio's sound card is not present"
+  if [ -z "$RADIO_MAC" ]; then say "note: no bluetooth address in $CONF_DIR/d750ctrl.conf, pairing not checked"; elif timeout 10 bluetoothctl info "$RADIO_MAC" 2>/dev/null | grep -q 'Paired: yes'; then say "Pass: Bluetooth paired"; else say "Warn: Bluetooth not paired"; fi ;;
+
+mem)
+  sub=${1:-}; shift || true
+  case "$sub" in
+    list)
+      from=${1:-0}; to=${2:-49}; note_unverified ME; say "channels $from to $to that hold something:"
+      for ((n = from; n <= to; n++)); do r=$(ask "ME $(printf '%03d' "$n")"); [[ $r == ME* ]] || continue; bdy=$(body "$r"); say "  $(printf '%03d' "$n"): $(mhz "$(field "$bdy" 2)") MHz, $(mode_name "$(field "$bdy" 6)"), offset $(mhz "$(field "$bdy" 3)") MHz"; done ;;
+    show)
+      [ $# -eq 1 ] || usage "mem show N"; r=$(ask "ME $(printf '%03d' "$1")"); [[ $r == ME* ]] || fail "channel $1: $r"
+      bdy=$(body "$r"); names=(channel frequency offset step txstep mode fine finestep tone ctcss dcs ctcssdcs reverse oddsplit shift tonefreq ctcssfreq dcscode cross urcall dsqtype dsqcode lockout)
+      i=1; for nm in "${names[@]}"; do v=$(field "$bdy" $i); [ -z "$v" ] && break; case $nm in frequency|offset) v="$(mhz "$v") MHz";; mode) v=$(mode_name "$v");; esac; say "$nm: $v"; i=$((i + 1)); done ;;
+    goto)
+      [ $# -eq 2 ] || usage "mem goto A|B N"; b=$(band_num "$1"); note_unverified MR
+      r=$(set_cmd "MR $b,$(printf '%03d' "$2")") || exit 1; [ "$DRY" = 1 ] && exit 0
+      say "band $(band_letter "$b") on channel $(body "$r"), now $(mhz "$(field "$(body "$(ask "FQ $b")")" 2)") MHz" ;;
+    export)
+      [ $# -ge 1 ] || usage "mem export FILE [FROM TO]"; out=$1; from=${2:-0}; to=${3:-999}; n_ok=0
+      { echo "# TM-D750 memory channels exported $(date '+%A, %B %-d, %Y, %H:%M'), raw ME lines; d750 mem import FILE plays them back"; for ((n = from; n <= to; n++)); do r=$(ask "ME $(printf '%03d' "$n")"); [[ $r == ME* ]] && { echo "$r"; n_ok=$((n_ok + 1)); }; done; } > "$out"
+      say "exported $(grep -c '^ME' "$out") channels to $out" ;;
+    import)
+      [ $# -eq 1 ] || usage "mem import FILE"; [ -r "$1" ] || fail "cannot read $1"; n_ok=0; n_bad=0
+      while IFS= read -r line; do [[ $line == ME* ]] || continue; [ "$DRY" = 1 ] && { set_cmd "$line"; continue; }; if r=$(set_cmd "$line" 2>&1); then n_ok=$((n_ok + 1)); else n_bad=$((n_bad + 1)); say "$r"; fi; done < "$1"
+      say "import: $n_ok channels written, $n_bad refused"; [ "$n_bad" = 0 ] ;;
+    *) usage "mem list|show|goto|export|import" ;;
+  esac ;;
+
+gps)
+  note_unverified GP; r=$(ask GP); [[ $r == GP* ]] || fail "GP not answered: $r"
+  on=$(field "$(body "$r")" 1); out=$(field "$(body "$r")" 2)
+  if [ $# -eq 0 ]; then say "GPS $([ "$on" = 1 ] && echo on || echo off); PC output $([ "$out" = 1 ] && echo on || echo off)"; exit 0; fi
+  [ "${1:-}" = output ] && [ $# -eq 2 ] || usage "gps [output off|on]"; case "${2,,}" in off) w=0;; on) w=1;; *) usage "gps output off|on";; esac
+  r=$(set_cmd "GP $on,$w") || exit 1; [ "$DRY" = 1 ] && exit 0; say "GPS PC output: $([ "$(field "$(body "$r")" 2)" = 1 ] && echo on || echo off)" ;;
+
+vox)
+  note_unverified VX; vx=$(ask VX); [[ $vx == VX* ]] || fail "VX not answered: $vx"
+  v=$(body "$vx"); vd=$(body "$(ask VD)"); vg=$(body "$(ask VG)")
+  if [ $# -eq 0 ]; then [ "$v" = 0 ] && say "VOX off" || say "VOX on, setting $v"; say "delay $vd, gain $vg"; exit 0; fi
+  case "${1,,}" in off) w=0;; on) w=1;; *) usage "vox [on|off]";; esac
+  r=$(set_cmd "VX $w") || exit 1; [ "$DRY" = 1 ] && exit 0; say "VOX: $(body "$r")" ;;
+
+clock)
+  note_unverified RT; r=$(ask RT); [[ $r == RT* ]] || fail "RT not answered: $r"; t=$(body "$r")
+  say "radio clock: 20${t:0:2}-${t:2:2}-${t:4:2} ${t:6:2}:${t:8:2}:${t:10:2}; this computer: $(date '+%Y-%m-%d %H:%M:%S')"
+  [ "${1:-}" = set ] || exit 0; r=$(set_cmd "RT $(date +%y%m%d%H%M%S)") || exit 1; [ "$DRY" = 1 ] && exit 0; say "radio clock set: $(body "$r")" ;;
+
+level)
+  n=${1:-3}; src=$(radio_source); [ -n "$src" ] || fail "the radio's sound card is not present"
+  tmp=$(mktemp "${TMPDIR:-/tmp}/d750-level.XXXXXX"); timeout "$((n + 2))" parecord --device="$src" --rate=48000 --channels=1 --format=s16le --raw "$tmp" 2>/dev/null
+  python3 -I - "$tmp" "$n" <<'PY'
+import array, math, sys
+a = array.array("h"); a.frombytes(open(sys.argv[1], "rb").read())
+if not a: print("Fail: no samples"); sys.exit(1)
+n = len(a); rms = math.sqrt(sum(x*x for x in a)/n); peak = max(abs(x) for x in a)
+db = 20*math.log10(rms/32768) if rms else -120; pk = 20*math.log10(peak/32768) if peak else -120
+print(f"{n/48000:.1f} s: rms {db:.0f} dBFS, peak {pk:.0f} dBFS")
+print("reading:", "silence" if db < -60 else "clipping" if peak >= 32700 else "hot, lower menu 913" if pk > -6 else "good" if pk > -20 else "quiet, menu 913 could go up")
+PY
+  rm -f "$tmp" ;;
+
+record)
+  [ $# -ge 2 ] || usage "record SECONDS FILE [rx|tx]"; n=$1; out=$2; which=${3:-rx}
+  dev=$([ "$which" = tx ] && echo "$(radio_sink).monitor" || radio_source); [ -n "$dev" ] && [ "$dev" != ".monitor" ] || fail "the radio's sound card is not present"
+  timeout "$((n + 2))" parecord --device="$dev" --rate=48000 --channels=1 --format=s16le --file-format=wav "$out" 2>/dev/null
+  say "recorded $(du -h "$out" | cut -f1) to $out from the $which side" ;;
+
+ptt) [ "${1:-}" = off ] || usage "ptt off"; r=$(tcp "$PTT_PORT" "T 0"); say "unkey: $r" ;;
+
+doctor)
+  ok=0; bad=0; p() { say "Pass: $*"; ok=$((ok + 1)); }; f() { say "Fail: $*"; bad=$((bad + 1)); }
+  lsusb -d 2166: 2>/dev/null | grep -q TM-D750 && p "radio on USB: $(lsusb -d 2166: | grep -oE 'ID 2166:[0-9a-f]{4}')" || f "radio not on USB"
+  [ -r /dev/d750-cat ] && p "/dev/d750-cat present, $(stat -L -c '%U:%G %a' /dev/d750-cat)" || f "/dev/d750-cat missing; cable, or the udev rule for this socket"
+  systemctl --user is-active --quiet d750d.service && p "d750d running" || f "d750d not running"
+  st=$(ask state); case "$st" in *"port open"*) p "daemon: $st";; ERR*) f "$st";; *) f "daemon: $st";; esac
+  id=$(ask ID); [[ $id == ID* ]] && p "radio answers $id" || f "radio does not answer ID: $id"
+  case "$st" in *"unsolicited bytes seen 0"*) p "CAT port carries only CAT";; *) f "unsolicited bytes on the CAT port: menu 403 or 982";; esac
+  gp=$(ask GP); [[ $gp == GP* ]] && { [ "$(field "$(body "$gp")" 2)" = 0 ] && p "GPS PC output off" || f "GPS PC output on; d750 gps output off"; }
+  tn=$(ask TN); [[ $tn == TN* ]] && p "tnc $(tnc_name "$(field "$(body "$tn")" 1)") on band $(band_letter "$(field "$(body "$tn")" 2)")"
+  if [[ $tn == TN* ]] && [ "$(field "$(body "$tn")" 1)" != 0 ]; then b=$(field "$(body "$tn")" 2); sq=$(field "$(body "$(ask "SQ $b")")" 2); [ "$sq" != 0 ] && p "data band squelch $sq" || f "data band squelch is 0: the TNC will not transmit while menu 508 is on Busy"; fi
+  src=$(radio_source); [ -n "$src" ] && p "sound card present" || f "sound card not present"
+  [ -n "$src" ] && { [ "$(pactl get-default-sink)" = "$(radio_sink)" ] && f "the radio is the default sound output" || p "radio is not the default sound output"; }
+  if [ -n "$RADIO_MAC" ]; then timeout 10 bluetoothctl info "$RADIO_MAC" 2>/dev/null | grep -q 'Paired: yes' && p "Bluetooth paired" || f "Bluetooth not paired"; else say "note: no bluetooth address configured"; fi
+  r=$(tcp "$PTT_PORT" t); [[ $r == 0 || $r == 1 ]] && p "PTT port answers, $([ "$r" = 1 ] && echo keyed || echo not keyed)" || f "PTT port: $r"
+  systemctl --user is-active --quiet xara.service && p "xara running" || say "note: xara not running"
+  say "$ok pass, $bad fail"; [ "$bad" = 0 ] ;;
+
+*) say "unknown verb: $cmd"; sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac

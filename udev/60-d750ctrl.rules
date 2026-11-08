@@ -1,0 +1,5 @@
+# Kenwood TM-D750 over USB. The base unit socket (USB id 2166:9032) is a serial port only and becomes
+# /dev/d750-cat, the CAT port d750d opens. The control head socket (2166:9030) carries the sound card and a
+# serial port; its port becomes /dev/d750-head and is left alone. Both are owned by the user named below.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="2166", ATTRS{idProduct}=="9032", OWNER="@USER@", GROUP="uucp", MODE="0660", SYMLINK+="d750-cat"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="2166", ATTRS{idProduct}=="9030", OWNER="@USER@", GROUP="uucp", MODE="0660", SYMLINK+="d750-head"

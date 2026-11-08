@@ -1,0 +1,8 @@
+# d750ctrl settings. Copy to ~/.config/d750ctrl/d750ctrl.conf and fill in. Lines starting with # are ignored.
+# Your call sign, used for the CQ frame sent through xara.
+mycall = N0CALL
+# The radio's Bluetooth address, for the Bluetooth checks in d750 doctor and d750 fixup. Leave empty if unpaired.
+bluetooth =
+# d750d's ports: rigctld-style PTT for xara, and the command line protocol for the d750 tools.
+ptt_port = 4532
+cmd_port = 4533

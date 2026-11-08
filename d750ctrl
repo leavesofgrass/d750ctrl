@@ -1,0 +1,500 @@
+#!/usr/bin/env python3
+"""d750ctrl: keyboard rig control for the Kenwood TM-D750, on curses, through d750d.
+
+Both bands side by side, the active band's frequency in big digits, mode, squelch, power, VFO or memory,
+busy and transmit lamps, a busy history, the memory channels, the TNC and a scrolling log of every CAT
+exchange. Everything on the keyboard; the mouse is not needed and not used.
+
+  d750ctrl [--ascii] [--theme dark|mono] [--step KHZ]
+  Settings in ~/.config/d750ctrl/d750ctrl.conf: mycall, cmd_port, ptt_port. D750_CMD_PORT and D750_PTT_PORT override;
+  the test bed uses 4543 and 4542.
+
+Keys, also under ?:
+  Tab        switch the active band          Up/Down    frequency one step; PgUp/PgDn ten steps
+  s          cycle the step                  digits     type a frequency in MHz, Enter tunes, Esc cancels
+  [ ]        squelch down, up                p          power: high, mid, low, EL
+  m          mode: FM, NFM, AM, DV, DR       b          make the active band control and transmit
+  v          VFO or memory on the band       M          memory browser: Up/Down, Enter recalls, R rereads
+  t          TNC: off, APRS, KISS            g          GPS output to the PC port on or off
+  L          lock or unlock PTT in d750d     u          unkey now
+  c          one CQ frame through xara       k          set the radio clock from this computer
+  :          a raw CAT command               ?          help        q quit
+  x          xarachat, VARA keyboard chat    r          radiogram new, NTS traffic
+  S          SSTV: receive, or send a picture (d750-sstv)
+  R          RTTY: receive, or send a line of text (d750-rtty)
+The tools under x, r, S and R take over the terminal and hand it back when they finish.
+Written Sunday, November 8, 2026. MIT.
+"""
+import argparse
+import os
+import subprocess
+os.environ.setdefault("ESCDELAY", "25")  # arrow keys arrive as escape sequences; do not wait a second for them
+import curses
+import queue
+import socket
+import threading
+import time
+
+CONF = os.path.expanduser("~/.config/d750ctrl/d750ctrl.conf")
+
+
+def read_conf():
+    conf = {}
+    try:
+        for line in open(CONF, encoding="utf-8"):
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1); conf[k.strip().lower()] = v.strip()
+    except OSError:
+        pass
+    return conf
+
+
+CONFIG = read_conf()
+CMD_PORT = int(os.environ.get("D750_CMD_PORT", CONFIG.get("cmd_port", "4533")))
+PTT_PORT = int(os.environ.get("D750_PTT_PORT", CONFIG.get("ptt_port", "4532")))
+MYCALL = CONFIG.get("mycall", "").upper() or "N0CALL"
+MODES = {0: "FM", 1: "DV", 2: "AM", 3: "LSB", 4: "USB", 5: "CW", 6: "NFM", 7: "DR", 8: "WFM", 9: "R-CW"}
+MODE_CYCLE = [0, 6, 2, 1, 7]
+POWER = {0: "HIGH", 1: "MID", 2: "LOW", 3: "EL"}
+TNC = {0: "off", 1: "APRS", 2: "KISS"}
+STEPS_KHZ = [5, 6.25, 10, 12.5, 15, 20, 25, 50, 100]
+BIG = {  # three-row block digits
+    "0": ["█▀█", "█ █", "▀▀▀"], "1": ["▀█ ", " █ ", "▀▀▀"], "2": ["▀▀█", "█▀▀", "▀▀▀"], "3": ["▀▀█", "▀▀█", "▀▀▀"],
+    "4": ["█ █", "▀▀█", "  ▀"], "5": ["█▀▀", "▀▀█", "▀▀▀"], "6": ["█▀▀", "█▀█", "▀▀▀"], "7": ["▀▀█", "  █", "  ▀"],
+    "8": ["█▀█", "█▀█", "▀▀▀"], "9": ["█▀█", "▀▀█", "▀▀▀"], ".": ["   ", "   ", " ▀ "], " ": ["   ", "   ", "   "],
+}
+BIG_ASCII = {  # the same in plain characters
+    "0": ["###", "# #", "###"], "1": [" # ", " # ", " # "], "2": ["###", " ##", "###"], "3": ["###", " ##", "###"],
+    "4": ["# #", "###", "  #"], "5": ["###", "## ", "###"], "6": ["#  ", "###", "###"], "7": ["###", "  #", "  #"],
+    "8": ["###", "###", "###"], "9": ["###", "###", "  #"], ".": ["   ", "   ", " . "], " ": ["   ", "   ", "   "],
+}
+
+
+class Daemon:
+    """One connection to d750d's command port, one line in, one line out, with a lock."""
+
+    def __init__(self, port):
+        self.port = port
+        self.sock = None
+        self.lock = threading.Lock()
+        self.log = []
+
+    def connect(self):
+        self.sock = socket.create_connection(("127.0.0.1", self.port), timeout=5)
+        self.f = self.sock.makefile("rwb", buffering=0)
+
+    def ask(self, line):
+        with self.lock:
+            try:
+                if self.sock is None:
+                    self.connect()
+                self.f.write((line + "\n").encode())
+                reply = self.f.readline().decode(errors="replace").strip()
+            except OSError as e:
+                self.sock = None
+                reply = f"ERR {e}"
+            if not line.startswith(("FQ", "MD", "SQ", "BY", "PC", "VM", "BC", "TN", "state", "MR", "GP", "VX")) or reply.startswith("ERR"):
+                self.log.append((time.strftime("%H:%M:%S"), line, reply))
+                del self.log[:-200]
+            return reply
+
+    def set(self, line):
+        """A command that changes the radio: always logged."""
+        with self.lock:
+            try:
+                if self.sock is None:
+                    self.connect()
+                self.f.write((line + "\n").encode())
+                reply = self.f.readline().decode(errors="replace").strip()
+            except OSError as e:
+                self.sock = None
+                reply = f"ERR {e}"
+            self.log.append((time.strftime("%H:%M:%S"), line, reply))
+            del self.log[:-200]
+            return reply
+
+
+def ptt(cmd):
+    try:
+        s = socket.create_connection(("127.0.0.1", PTT_PORT), timeout=5)
+        s.sendall((cmd + "\n").encode()); r = s.makefile("rb").readline().decode().strip(); s.close(); return r
+    except OSError as e:
+        return f"ERR {e}"
+
+
+def field(reply, n):
+    body = reply.split(" ", 1)[1] if " " in reply else ""
+    parts = body.split(",")
+    return parts[n] if n < len(parts) else ""
+
+
+class Band:
+    def __init__(self, idx):
+        self.idx = idx
+        self.hz = 0; self.mode = 0; self.sq = 0; self.busy = 0; self.power = 0; self.vm = 0; self.mr = ""
+        self.history = []  # busy flags, newest last
+
+
+class Ctl:
+    def __init__(self, scr, args):
+        self.scr = scr
+        self.args = args
+        self.d = Daemon(CMD_PORT)
+        self.bands = [Band(0), Band(1)]
+        self.active = 0
+        self.ctrl, self.tx = 0, 0
+        self.tnc = (0, 0)
+        self.gps_out = None
+        self.vox = None
+        self.state = ""
+        self.keyed = False
+        self.locked = False
+        self.ident = ""
+        self.step_i = STEPS_KHZ.index(args.step) if args.step in STEPS_KHZ else 2
+        self.typing = None      # (prompt, buffer, handler)
+        self.message = ""
+        self.mode = "main"      # main, memory, help
+        self.memories = []      # (channel, hz, mode, offset_hz)
+        self.mem_sel = 0
+        self.mem_loaded = False
+        self.quit = False
+        self.big = BIG_ASCII if args.ascii else BIG
+        self.colors = False
+        if args.theme != "mono" and curses.has_colors():
+            curses.start_color(); curses.use_default_colors()
+            for i, (fg, bg) in enumerate([(curses.COLOR_CYAN, -1), (curses.COLOR_MAGENTA, -1), (curses.COLOR_RED, -1),
+                                          (curses.COLOR_YELLOW, -1), (curses.COLOR_GREEN, -1), (curses.COLOR_BLACK, curses.COLOR_CYAN),
+                                          (curses.COLOR_WHITE, curses.COLOR_RED)], start=1):
+                curses.init_pair(i, fg, bg)
+            self.colors = True
+        threading.Thread(target=self.poll, daemon=True).start()
+
+    # ---- colours ----
+    def c(self, name, bold=False):
+        idx = {"a": 1, "b": 2, "tx": 3, "busy": 4, "ok": 5, "bar": 6, "alarm": 7}[name]
+        a = curses.color_pair(idx) if self.colors else (curses.A_REVERSE if name in ("bar", "alarm") else 0)
+        return a | (curses.A_BOLD if bold else 0)
+
+    # ---- polling ----
+    def poll(self):
+        while not self.quit:
+            try:
+                st = self.d.ask("state")
+                self.state = st
+                self.keyed = "; keyed" in st
+                self.locked = "; locked" in st
+                if not self.ident:
+                    r = self.d.ask("ID"); self.ident = r if r.startswith("ID") else ""
+                bc = self.d.ask("BC")
+                if bc.startswith("BC"): self.ctrl, self.tx = int(field(bc, 0)), int(field(bc, 1))
+                for b in self.bands:
+                    r = self.d.ask(f"FQ {b.idx}"); b.hz = int(field(r, 1)) if r.startswith("FQ") else b.hz
+                    r = self.d.ask(f"MD {b.idx}"); b.mode = int(field(r, 1)) if r.startswith("MD") else b.mode
+                    r = self.d.ask(f"SQ {b.idx}"); b.sq = int(field(r, 1)) if r.startswith("SQ") else b.sq
+                    r = self.d.ask(f"BY {b.idx}"); b.busy = int(field(r, 1)) if r.startswith("BY") else 0
+                    b.history.append(b.busy); del b.history[:-60]
+                    r = self.d.ask(f"PC {b.idx}"); b.power = int(field(r, 1)) if r.startswith("PC") else b.power
+                    r = self.d.ask(f"VM {b.idx}"); b.vm = int(field(r, 1)) if r.startswith("VM") else b.vm
+                    if b.vm == 1:
+                        r = self.d.ask(f"MR {b.idx}"); b.mr = r.split(" ", 1)[1] if r.startswith("MR ") else ""
+                    else:
+                        b.mr = ""
+                tn = self.d.ask("TN")
+                if tn.startswith("TN"): self.tnc = (int(field(tn, 0)), int(field(tn, 1)))
+                gp = self.d.ask("GP")
+                self.gps_out = int(field(gp, 1)) if gp.startswith("GP") else None
+                vx = self.d.ask("VX")
+                self.vox = int(vx.split()[1]) if vx.startswith("VX ") else None
+            except Exception as e:  # noqa: BLE001
+                self.message = f"poll: {e}"
+            time.sleep(0.4)
+
+    # ---- actions ----
+    def say(self, text):
+        self.message = time.strftime("%H:%M:%S ") + text
+
+    def tune(self, hz):
+        b = self.bands[self.active]
+        r = self.d.set(f"FQ {b.idx},{hz:010d}")
+        self.say(f"band {'AB'[b.idx]} {hz/1e6:.3f} MHz" if r.startswith("FQ") else f"radio refused {hz/1e6:.3f} MHz: {r}")
+
+    def step(self, direction, count=1):
+        b = self.bands[self.active]
+        hz = b.hz + direction * count * int(STEPS_KHZ[self.step_i] * 1000)
+        self.tune(hz)
+
+    def set_simple(self, cmd, value, label):
+        b = self.bands[self.active]
+        r = self.d.set(f"{cmd} {b.idx},{value}")
+        self.say(f"band {'AB'[b.idx]} {label}" if r.startswith(cmd) else f"radio refused: {r}")
+
+    def load_memories(self, upto=199):
+        self.memories = []
+        for n in range(0, upto + 1):
+            r = self.d.ask(f"ME {n:03d}")
+            if r.startswith("ME"):
+                try:
+                    self.memories.append((n, int(field(r, 1)), int(field(r, 5)), int(field(r, 2))))
+                except ValueError:
+                    pass
+            self.message = f"reading memory channel {n:03d}, {len(self.memories)} found"
+        self.mem_loaded = True
+        self.say(f"{len(self.memories)} memory channels in 000 to {upto:03d}")
+
+    def key(self, k):
+        if self.typing is not None:
+            prompt, buf, handler = self.typing
+            if k in (27,):
+                self.typing = None; self.say("cancelled")
+            elif k in (10, 13, curses.KEY_ENTER):
+                self.typing = None; handler(buf)
+            elif k in (curses.KEY_BACKSPACE, 127, 8):
+                self.typing = (prompt, buf[:-1], handler)
+            elif 32 <= k < 127:
+                if prompt.endswith("y/n") and chr(k).lower() in ("y", "n"):
+                    self.typing = None; handler(chr(k)); return
+                if prompt.endswith("r receive, s send") and chr(k).lower() in ("r", "s"):
+                    self.typing = None; handler(chr(k)); return
+                self.typing = (prompt, buf + chr(k), handler)
+            return
+        if self.mode == "help":
+            self.mode = "main"; return
+        if self.mode == "memory":
+            if k in (27, ord("q"), ord("M")): self.mode = "main"
+            elif k == curses.KEY_UP: self.mem_sel = max(0, self.mem_sel - 1)
+            elif k == curses.KEY_DOWN: self.mem_sel = min(len(self.memories) - 1, self.mem_sel + 1)
+            elif k == curses.KEY_PPAGE: self.mem_sel = max(0, self.mem_sel - 10)
+            elif k == curses.KEY_NPAGE: self.mem_sel = min(len(self.memories) - 1, self.mem_sel + 10)
+            elif k in (10, 13, curses.KEY_ENTER) and self.memories:
+                n = self.memories[self.mem_sel][0]; b = self.bands[self.active]
+                r = self.d.set(f"MR {b.idx},{n:03d}")
+                self.say(f"band {'AB'[b.idx]} on channel {n:03d}" if not r.startswith(("N", "?", "ERR")) else f"radio refused channel {n:03d}: {r}")
+                self.mode = "main"
+            elif k == ord("R"): self.load_memories()
+            return
+        if k == ord("q"): self.quit = True
+        elif k == ord("?"): self.mode = "help"
+        elif k == 9: self.active ^= 1
+        elif k == curses.KEY_UP: self.step(+1)
+        elif k == curses.KEY_DOWN: self.step(-1)
+        elif k == curses.KEY_PPAGE: self.step(+1, 10)
+        elif k == curses.KEY_NPAGE: self.step(-1, 10)
+        elif k == ord("s"): self.step_i = (self.step_i + 1) % len(STEPS_KHZ); self.say(f"step {STEPS_KHZ[self.step_i]:g} kHz")
+        elif k == ord("["): b = self.bands[self.active]; self.set_simple("SQ", max(0, b.sq - 1), f"squelch {max(0, b.sq - 1)}")
+        elif k == ord("]"): b = self.bands[self.active]; self.set_simple("SQ", min(9, b.sq + 1), f"squelch {min(9, b.sq + 1)}")
+        elif k == ord("p"): b = self.bands[self.active]; v = (b.power + 1) % 4; self.set_simple("PC", v, f"power {POWER[v]}")
+        elif k == ord("m"):
+            b = self.bands[self.active]; cur = MODE_CYCLE.index(b.mode) if b.mode in MODE_CYCLE else -1
+            v = MODE_CYCLE[(cur + 1) % len(MODE_CYCLE)]; self.set_simple("MD", v, f"mode {MODES[v]}")
+        elif k == ord("b"):
+            r = self.d.set(f"BC {self.active},{self.active}"); self.say(f"band {'AB'[self.active]} controls and transmits" if r.startswith("BC") else f"refused: {r}")
+        elif k == ord("v"):
+            b = self.bands[self.active]; v = 0 if b.vm == 1 else 1; self.set_simple("VM", v, "memory mode" if v else "VFO")
+        elif k == ord("M"):
+            self.mode = "memory"
+            if not self.mem_loaded: threading.Thread(target=self.load_memories, daemon=True).start()
+        elif k == ord("t"):
+            nxt = (self.tnc[0] + 1) % 3
+            self.typing = (f"TNC to {TNC[nxt]} on band {'AB'[self.tnc[1]]}? y/n", "", lambda v: self.tnc_set(nxt) if v.lower().startswith("y") else self.say("TNC unchanged"))
+        elif k == ord("g"):
+            if self.gps_out is None: self.say("GP not answered"); return
+            v = 0 if self.gps_out else 1; r = self.d.set(f"GP 1,{v}"); self.say(f"GPS output to the PC port {'on' if v else 'off'}" if r.startswith("GP") else f"refused: {r}")
+        elif k == ord("L"):
+            r = self.d.set("unlock" if self.locked else "lock"); self.say(r)
+        elif k == ord("u"):
+            self.say("unkey: " + ptt("T 0"))
+        elif k == ord("c"):
+            self.typing = ("Send one CQ frame through xara on the transmit band? y/n", "", lambda v: self.cq() if v.lower().startswith("y") else self.say("no CQ"))
+        elif k == ord("k"):
+            self.typing = ("Set the radio clock from this computer? y/n", "", lambda v: self.clock() if v.lower().startswith("y") else self.say("clock unchanged"))
+        elif k == ord(":"):
+            self.typing = ("CAT:", "", lambda v: self.say(f"{v} -> {self.d.set(v)}") if v.strip() else None)
+        elif k == ord("x"): self.run_external(["xarachat", "--tui"], pause_after=False)
+        elif k == ord("r"): self.run_external(["radiogram", "new"])
+        elif k == ord("S"): self.sstv_menu()
+        elif k == ord("R"): self.rtty_menu()
+        elif 48 <= k <= 57 or k == ord("."):
+            self.typing = ("Frequency MHz:", chr(k), self.typed_frequency)
+
+    def run_external(self, argv, pause_after=True):
+        """Hand the terminal to another program, then take it back."""
+        curses.def_prog_mode(); curses.endwin()
+        try:
+            print(f"\n--- {' '.join(argv)} ---", flush=True)
+            subprocess.call(argv)
+            if pause_after:
+                input("\n--- back to d750ctrl: press Enter ---")
+        except KeyboardInterrupt:
+            pass
+        except OSError as e:
+            print(f"could not run {argv[0]}: {e}"); input("press Enter")
+        curses.reset_prog_mode(); self.scr.clear(); self.scr.refresh()
+
+    def sstv_menu(self):
+        def got(v):
+            v = v.strip().lower()
+            if v.startswith("r"):
+                self.typing = ("Seconds to listen [150]:", "", lambda n: self.run_external(["d750-sstv", "rx", n.strip() or "150"]))
+            elif v.startswith("s"):
+                def got_img(path):
+                    path = path.strip()
+                    if not path: self.say("no picture, nothing sent"); return
+                    self.typing = ("Mode [ROBOT_36]:", "", lambda m: self.run_external(["d750-sstv", "tx", os.path.expanduser(path), (m.strip() or "ROBOT_36").upper()]))
+                self.typing = ("Picture file to send:", "", got_img)
+            else:
+                self.say("SSTV: nothing done")
+        self.typing = ("SSTV: r receive, s send", "", got)
+
+    def rtty_menu(self):
+        def got(v):
+            v = v.strip().lower()
+            if v.startswith("r"):
+                self.typing = ("Seconds to listen [60]:", "", lambda n: self.run_external(["d750-rtty", "rx", n.strip() or "60"]))
+            elif v.startswith("s"):
+                self.typing = ("Text to send:", "", lambda t: self.run_external(["d750-rtty", "tx", t]) if t.strip() else self.say("nothing sent"))
+            else:
+                self.say("RTTY: nothing done")
+        self.typing = ("RTTY: r receive, s send", "", got)
+
+    def typed_frequency(self, text):
+        try:
+            mhz = float(text)
+        except ValueError:
+            self.say(f"not a frequency: {text}"); return
+        self.tune(int(round(mhz * 1e6)))
+
+    def tnc_set(self, mode):
+        r = self.d.set(f"TN {mode},{self.tnc[1]}")
+        self.say(f"TNC {TNC[mode]} on band {'AB'[self.tnc[1]]}" if r.startswith("TN") else f"refused: {r}")
+
+    def clock(self):
+        r = self.d.set("RT " + time.strftime("%y%m%d%H%M%S"))
+        self.say("radio clock set" if r.startswith("RT") else f"refused: {r}")
+
+    def cq(self):
+        try:
+            s = socket.create_connection(("127.0.0.1", 8300), timeout=5)
+            s.sendall(f"CQFRAME {MYCALL}\r".encode()); time.sleep(0.5); s.close()
+            self.say("CQ frame handed to xara")
+        except OSError as e:
+            self.say(f"xara not reachable on 8300: {e}")
+
+    # ---- drawing ----
+    def big_text(self, text):
+        rows = ["", "", ""]
+        for ch in text:
+            g = self.big.get(ch, self.big[" "])
+            for i in range(3): rows[i] += g[i] + " "
+        return rows
+
+    def band_panel(self, y, x, w, b):
+        active = b.idx == self.active
+        col = self.c("a" if b.idx == 0 else "b", bold=active)
+        tags = []
+        if self.ctrl == b.idx: tags.append("CTRL")
+        if self.tx == b.idx: tags.append("TX band")
+        head = f" BAND {'AB'[b.idx]}  {' '.join(tags)}" + ("  <active>" if active else "")
+        self.scr.addnstr(y, x, head.ljust(w), w, col | (curses.A_REVERSE if active else 0))
+        mhz = f"{b.hz/1e6:.3f}" if b.hz else "---.---"
+        if active:
+            for i, row in enumerate(self.big_text(mhz)):
+                self.scr.addnstr(y + 1 + i, x + 1, row, w - 2, col)
+            line = y + 4
+        else:
+            self.scr.addnstr(y + 2, x + 1, mhz + " MHz", w - 2, col)
+            line = y + 4
+        vm = f"MR {b.mr}" if b.vm == 1 else "VFO"
+        self.scr.addnstr(line, x + 1, f"{MODES.get(b.mode, b.mode)}  power {POWER.get(b.power, b.power)}  {vm}", w - 2)
+        bar = "#" * b.sq + "." * (9 - b.sq)
+        self.scr.addnstr(line + 1, x + 1, f"squelch {b.sq} [{bar}]", w - 2)
+        lamp = " BUSY " if b.busy else " quiet "
+        self.scr.addnstr(line + 2, x + 1, lamp, w - 2, self.c("busy", bold=True) | (curses.A_REVERSE if b.busy else 0))
+        hist = "".join("|" if v else "." for v in b.history[-(w - 12):])
+        self.scr.addnstr(line + 2, x + 9, hist, w - 10)
+
+    def draw(self):
+        h, w = self.scr.getmaxyx()
+        self.scr.erase()
+        title = f" d750ctrl  {self.ident or 'radio?'}  step {STEPS_KHZ[self.step_i]:g} kHz  TNC {TNC.get(self.tnc[0], '?')} on {'AB'[self.tnc[1]]}"
+        title += f"  GPS out {'on' if self.gps_out else 'off'}" if self.gps_out is not None else ""
+        title += f"  VOX {'on' if self.vox else 'off'}" if self.vox is not None else ""
+        self.scr.addnstr(0, 0, title.ljust(w - 1), w - 1, self.c("bar", bold=True))
+        if self.keyed:
+            self.scr.addnstr(0, max(0, w - 14), " TRANSMIT ", 13, self.c("alarm", bold=True))
+        elif self.locked:
+            self.scr.addnstr(0, max(0, w - 14), " PTT LOCKED ", 13, self.c("busy", bold=True))
+        half = (w - 1) // 2
+        if self.mode == "memory":
+            self.scr.addnstr(2, 1, f"Memory channels, Enter recalls on band {'AB'[self.active]}, R rereads, Esc back", w - 2, curses.A_BOLD)
+            rows = h - 6
+            start = max(0, min(self.mem_sel - rows // 2, len(self.memories) - rows))
+            for i, (n, hz, md, off) in enumerate(self.memories[start:start + rows]):
+                sel = (start + i) == self.mem_sel
+                text = f"{n:03d}  {hz/1e6:9.3f} MHz  {MODES.get(md, md):4}  offset {off/1e6:.3f} MHz"
+                self.scr.addnstr(3 + i, 2, text, w - 4, curses.A_REVERSE if sel else 0)
+            if not self.memories:
+                self.scr.addnstr(3, 2, "reading..." if not self.mem_loaded else "no channels found", w - 4)
+        elif self.mode == "help":
+            help_lines = __doc__.strip().splitlines()[9:27]
+            for i, line in enumerate(help_lines):
+                self.scr.addnstr(2 + i, 1, line, w - 2)
+            self.scr.addnstr(2 + len(help_lines) + 1, 1, "any key returns", w - 2, curses.A_BOLD)
+        else:
+            self.band_panel(2, 0, half, self.bands[0])
+            self.band_panel(2, half + 1, w - half - 2, self.bands[1])
+            # CAT log
+            top = 10
+            self.scr.addnstr(top, 0, " CAT log ".ljust(w - 1), w - 1, curses.A_REVERSE)
+            rows = h - top - 4
+            for i, (t, cmd, rep) in enumerate(self.d.log[-rows:]):
+                self.scr.addnstr(top + 1 + i, 0, f"{t} > {cmd:<22} < {rep}", w - 1)
+        # key bar, message, input
+        keys = " Tab band  Up/Dn tune  s step  [ ] squelch  p power  m mode  b ctrl/tx  v vfo/mem  M mem  t tnc  g gps  L lock  u unkey  c cq  k clock  : cat  x chat  r radiogram  S sstv  R rtty  ? help  q quit"
+        self.scr.addnstr(h - 3, 0, keys[:w - 1].ljust(w - 1), w - 1, self.c("bar"))
+        self.scr.addnstr(h - 2, 0, (self.message or self.state)[:w - 1], w - 1)
+        if self.typing is not None:
+            prompt, buf, _ = self.typing
+            self.scr.addnstr(h - 1, 0, f"{prompt} {buf}"[:w - 1], w - 1, curses.A_BOLD)
+            self.scr.move(h - 1, min(len(prompt) + 1 + len(buf), w - 2))
+        else:
+            self.scr.addnstr(h - 1, 0, " ".ljust(w - 1), w - 1)
+            curses.curs_set(0)
+        self.scr.refresh()
+
+    def run(self):
+        self.scr.timeout(150)
+        self.scr.keypad(True)
+        try:
+            curses.curs_set(0)
+        except curses.error:
+            pass
+        while not self.quit:
+            self.draw()
+            try:
+                k = self.scr.getch()
+            except curses.error:
+                continue
+            if k == -1 or k == curses.KEY_RESIZE:
+                continue
+            if self.typing is not None:
+                curses.curs_set(1)
+            self.key(k)
+
+
+def main():
+    ap = argparse.ArgumentParser(description="keyboard rig control for the Kenwood TM-D750 through d750d")
+    ap.add_argument("--ascii", action="store_true", help="plain characters instead of block digits")
+    ap.add_argument("--theme", default="dark", choices=["dark", "mono"])
+    ap.add_argument("--step", type=float, default=10, help="tuning step in kHz: 5, 6.25, 10, 12.5, 15, 20, 25, 50, 100")
+    a = ap.parse_args()
+    try:
+        socket.create_connection(("127.0.0.1", CMD_PORT), timeout=3).close()
+    except OSError:
+        print(f"Fail: d750d is not answering on 127.0.0.1:{CMD_PORT} (systemctl --user status d750d)"); return 1
+    curses.wrapper(lambda scr: Ctl(scr, a).run())
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

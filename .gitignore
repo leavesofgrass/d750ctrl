@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+log/
+mem/
+commands.txt
+d750d.service
