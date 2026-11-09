@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- VarAC as an option: o opens xarachat with VarAC's framing on, in the varac window, or openslot when the
+  settings say varac = openslot; x and o share one xarachat and jump to each other's window. c offers a
+  VarAC CQ frame or a beacon frame; d750 vara cq and d750 vara beacon do the same from the command line,
+  with the call from the settings instead of a fixed one.
 - d750d speaks enough of hamlib's NET rigctl protocol for WSJT-X, fldigi, GridTracker, OpenSlot and hamlib's own
   rigctl: the chk_vfo and dump_state handshake, f F m M v V t T s S l L, get_vfo_info, get_powerstat,
   get_lock_mode, the long command names and the extended reply form. Before, only T (PTT) was answered and

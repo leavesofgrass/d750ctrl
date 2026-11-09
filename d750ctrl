@@ -17,10 +17,11 @@ Keys, also under ?:
   v          VFO or memory on the band       M          memory browser: Up/Down, Enter recalls, R rereads
   t          TNC: off, APRS, KISS            g          GPS output to the PC port on or off
   L          lock or unlock PTT in d750d     u          unkey now
-  c          one CQ frame through xara       k          set the radio clock from this computer
+  c          one VarAC CQ or beacon frame    k          set the radio clock from this computer
   :          a raw CAT command               ?          help        q quit
   x          chat window: xarachat over VARA r          radiogram new, NTS traffic
-  o          VarAC chat window: openslot --tui, the VarAC-compatible client
+  o          VarAC chat window: xarachat speaking VarAC's framing (varac = openslot in the settings
+             opens openslot --tui, the other VarAC-compatible client, instead)
   S          SSTV: receive, or send a picture (d750-sstv)
   R          RTTY: receive, or send a line of text (d750-rtty)
 Each tool opens in a window of its own and keeps running while you tune. F9 brings this rig screen
@@ -100,6 +101,7 @@ CONFIG = read_conf()
 CMD_PORT = int(os.environ.get("D750_CMD_PORT", CONFIG.get("cmd_port", "4533")))
 PTT_PORT = int(os.environ.get("D750_PTT_PORT", CONFIG.get("ptt_port", "4532")))
 MYCALL = CONFIG.get("mycall", "").upper() or "N0CALL"
+VARAC_TOOL = (CONFIG.get("varac") or "xarachat").strip().lower()      # what o opens: xarachat (VarAC on) or openslot
 # The TM-D750 answers MD with codes 0 to 3 only, learned on the radio on November 8 by ear on a weather broadcast:
 # 0 FM, 1 NFM, 2 AM, 3 DV. The TH-D74 table (DV 1, NFM 6, DR 7) does not apply; DR is not reachable through MD.
 MODES = {0: "FM", 1: "NFM", 2: "AM", 3: "DV"}
@@ -365,13 +367,14 @@ class Ctl:
         elif k == ord("u"):
             self.say("unkey: " + ptt("T 0"))
         elif k == ord("c"):
-            self.typing = ("Send one CQ frame through xara on the transmit band? y/n", "", lambda v: self.cq() if v.lower().startswith("y") else self.say("no CQ"))
+            self.typing = ("Send one VarAC frame through xara on the transmit band? c = CQ, b = beacon, n = no", "",
+                           lambda v: self.cq(v.lower().startswith("b")) if v.lower()[:1] in ("c", "y", "b") else self.say("nothing sent"))
         elif k == ord("k"):
             self.typing = ("Set the radio clock from this computer? y/n", "", lambda v: self.clock() if v.lower().startswith("y") else self.say("clock unchanged"))
         elif k == ord(":"):
             self.typing = ("CAT:", "", lambda v: self.say(f"{v} -> {self.d.set(v)}") if v.strip() else None)
-        elif k == ord("x"): self.run_external(["xarachat", "--tui"], pause_after=False, name="chat")
-        elif k == ord("o"): self.run_external(["openslot", "--tui"], pause_after=False, name="varac")
+        elif k == ord("x"): self.open_chat("chat")
+        elif k == ord("o"): self.open_chat("varac")
         elif k == ord("r"): self.run_external(["radiogram", "new"], name="radiogram")
         elif k == ord("S"): self.sstv_menu()
         elif k == ord("R"): self.rtty_menu()
@@ -387,6 +390,20 @@ class Ctl:
             self.quit = True; tmux("kill-server")
         else:
             self.say("leaving the other windows; run d750ctrl again to get this screen back"); self.quit = True
+
+    def open_chat(self, which):
+        """x: xarachat as it is (VarAC when the other side speaks it). o: VarAC chat, xarachat with VarAC on,
+        or openslot when the settings say varac = openslot. One xarachat at a time: xara takes one client,
+        so the other letter jumps to the window that is open and says how to switch."""
+        if which == "varac" and VARAC_TOOL == "openslot":
+            self.run_external(["openslot", "--tui"], pause_after=False, name="varac"); return
+        other = "varac" if which == "chat" else "chat"
+        if self.ws and other in tmux_windows():
+            tmux("select-window", "-t", f"{SESSION}:{other}")
+            self.say(f"xarachat is open in the {other} window; /varac {'on' if which == 'varac' else 'off'} switches it there")
+            return
+        argv = ["xarachat", "--tui"] + (["--varac", "yes"] if which == "varac" else [])
+        self.run_external(argv, pause_after=False, name=which)
 
     def run_external(self, argv, pause_after=True, name=None):
         """Run another program: in a window of its own when this screen runs in the tmux workspace,
@@ -457,11 +474,12 @@ class Ctl:
         r = self.d.set("RT " + time.strftime("%y%m%d%H%M%S"))
         self.say("radio clock set" if r.startswith("RT") else f"refused: {r}")
 
-    def cq(self):
+    def cq(self, beacon=False):
+        """VarAC's CQ frame is CQFRAME CALL; its beacon is the same with SSID 9 (no slots on VARA FM)."""
         try:
             s = socket.create_connection(("127.0.0.1", 8300), timeout=5)
-            s.sendall(f"CQFRAME {MYCALL}\r".encode()); time.sleep(0.5); s.close()
-            self.say("CQ frame handed to xara")
+            s.sendall(f"CQFRAME {MYCALL.split('-')[0]}{'-9' if beacon else ''}\r".encode()); time.sleep(0.5); s.close()
+            self.say(("beacon" if beacon else "CQ") + " frame handed to xara, in VarAC's format")
         except OSError as e:
             self.say(f"xara not reachable on 8300: {e}")
 

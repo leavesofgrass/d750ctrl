@@ -31,11 +31,12 @@ and the computer. Both sockets may be connected at once; the udev rule names the
   and logs every exchange under ~/.local/share/d750ctrl/log.
 - d750: the verbs. status, freq, band, mode, squelch, power, busy, watch, tnc, vara, fixup, mem, gps, vox,
   clock, level, record, ptt off, doctor, probe, log, lock, unlock, raw. Add -n for a dry run of anything that
-  changes the radio. Exit 0 Pass, 1 Fail, 2 usage.
+  changes the radio. Exit 0 Pass, 1 Fail, 2 usage. `d750 vara cq` and `d750 vara beacon` send one VarAC CQ
+  frame or beacon frame through xara with the call from the settings, the way VarAC stations expect them.
 - d750ctrl: the screen. Both bands, the active band in big digits, tuning by step or typed frequency, squelch,
-  power, mode, VFO or memory, a memory browser read from the radio, TNC, GPS output, PTT lock, unkey, one CQ
-  frame through xara, the radio clock, raw CAT, a scrolling CAT log; x, o, r, S and R open xarachat, openslot
-  (VarAC chat), radiogram, SSTV and RTTY in windows of their own (see Jumping between modes).
+  power, mode, VFO or memory, a memory browser read from the radio, TNC, GPS output, PTT lock, unkey, one
+  VarAC CQ or beacon frame through xara, the radio clock, raw CAT, a scrolling CAT log; x, o, r, S and R open
+  xarachat, VarAC chat, radiogram, SSTV and RTTY in windows of their own (see Jumping between modes).
 - d750-sstv and d750-rtty: send and receive through the radio's sound card, keyed through d750d, with xara
   paused meanwhile. SSTV uses the sstv Python package; RTTY uses rttymodem.py, a Baudot modem written here.
 - probe.py: asks the radio, read only, which commands it answers and writes the table the verbs rely on.
@@ -46,8 +47,11 @@ and the computer. Both sockets may be connected at once; the udev rule names the
 
 When tmux is installed, d750ctrl starts itself inside tmux, on a tmux server of its own, so your other tmux
 sessions are untouched. The rig screen is window 0, named rig. x opens xarachat in a window named chat, o
-openslot's terminal client (VarAC chat) in a window named varac, r a radiogram, S and R the SSTV and RTTY
-tools. Each keeps running while you tune, so a chat link stays up. F9 brings the rig screen back from
+VarAC chat in a window named varac: xarachat with VarAC's framing on (`xarachat --tui --varac yes`), or
+openslot's terminal client when the settings say `varac = openslot`. xara takes one client, so x and o share
+one xarachat: the other letter jumps to the window that is open and names the `/varac on` or `/varac off`
+command that switches it. r opens a radiogram, S and R the SSTV and RTTY tools. Each keeps running while you
+tune, so a chat link stays up. F9 brings the rig screen back from
 anywhere, F12 steps through the open windows, and the same letter jumps to a window that is already open
 instead of starting a second copy. The rig screen's message line and the bottom tmux line list the open
 windows. A tool's own quit key (F10 in xarachat, Ctrl-Q in openslot) closes its window, and q on the rig
@@ -59,7 +63,8 @@ back when it ends. The tmux prefix, Ctrl-b, works as usual.
 
 ~/.config/d750ctrl/d750ctrl.conf, written by install.sh from d750ctrl.conf.example:
 
-    mycall = N0CALL        your call, for the CQ frame
+    mycall = N0CALL        your call, for the CQ and beacon frames
+    varac = xarachat       what o opens for VarAC chat: xarachat with VarAC on, or openslot
     bluetooth =            the radio's Bluetooth address, for the pairing checks; empty if unpaired
     ptt_port = 4532
     cmd_port = 4533
@@ -89,7 +94,7 @@ TX and RX commands and offers hamlib's protocol on its own port instead.
 ## Tests
 
     ./test-env.sh &                 the simulator and a second daemon on ports 4542 and 4543
-    ./tests.sh                      the verbs, 46 checks
+    ./tests.sh                      the verbs, 48 checks
     python3 d750ctrl-test.py        the screen under a pseudo terminal, 18 checks
     ./modes-test.sh                 RTTY and SSTV round trips over a virtual sink
     .venv/bin/python rttymodem.py selftest

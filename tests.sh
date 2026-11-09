@@ -58,6 +58,9 @@ check "unlock" "unlocked" d750 unlock
 check "ptt key and unkey" "RPRT 0" bash -c 'printf "T 1\nT 0\n" | nc -w 2 127.0.0.1 4542 | tail -1'
 check "log" "key in" d750 log 40
 check "vara status" "xara:" d750 vara status
+printf 'mycall = KD7SWH-7\n' > "$D750_CONF_DIR/d750ctrl.conf"
+check "vara cq dry run, VarAC CQ frame" "would send one VarAC cq frame through xara: CQFRAME KD7SWH" d750 -n vara cq
+check "vara beacon dry run, VarAC beacon frame" "CQFRAME KD7SWH-9" d750 -n vara beacon
 check "doctor runs" "pass," d750 doctor
 # hamlib's NET rigctl client against the daemon: the open handshake, then reads and writes on the transmit band (B on the simulator)
 R="rigctl -m 2 -r 127.0.0.1:4542"

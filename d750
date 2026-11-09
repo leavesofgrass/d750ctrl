@@ -6,7 +6,7 @@
 #   mode A|B fm|nfm|am|dv       set a band's mode             squelch A|B 0-9     squelch level
 #   power A|B high|mid|low|el   output power                  busy A|B            squelch open or closed now
 #   watch A|B [SECONDS]         busy once a second            tnc off|aprs|kiss [A|B]   TNC mode by command
-#   vara fm|hf|off|status|cq    xara's mode, state, one CQ    fixup               put back what the box relies on
+#   vara fm|hf|off|status|cq|beacon   xara's mode, state, one VarAC CQ or beacon frame   fixup   put back what the box relies on
 #   mem list [FROM TO]          memory channels               mem show N          one channel, field by field
 #   mem goto A|B N              recall a channel              mem export FILE [FROM TO] | mem import FILE
 #   gps [output off|on]         GPS and its PC output         vox [on|off]        VOX state
@@ -134,7 +134,7 @@ tnc)
   [ "$m" = 2 ] && say "KISS mode: the radio's own APRS screen is off; this computer reads the TNC over Bluetooth" ;;
 
 vara)
-  conf="$HOME/.config/xara/xara.conf"; [ $# -ge 1 ] || usage "vara fm|hf|off|status|cq"
+  conf="$HOME/.config/xara/xara.conf"; [ $# -ge 1 ] || usage "vara fm|hf|off|status|cq|beacon"
   case "${1,,}" in
     fm|hf)
       [ -w "$conf" ] || fail "no $conf"
@@ -149,14 +149,17 @@ vara)
       say "xara: $(systemctl --user is-active xara.service)"; grep -E '^(fm|hf|ptt|ptt-lead-ms|drive-db) = ' "$conf" 2>/dev/null | sed 's/^/  /'
       say "ports: $(ss -ltnH | awk '{print $4}' | grep -E ':(8300|8100|8310)$' | sed 's/0.0.0.0://' | paste -sd' ' -)"
       f="$LOGDIR/d750d-$(date +%F).txt"; [ -r "$f" ] && say "last keying: $(grep -E ' key in ' "$f" | tail -1)" ;;
-    cq)
-      systemctl --user is-active --quiet xara.service || fail "xara is not running"
+    cq|beacon)
+      # VarAC's CQ is a CQ frame with the bare call; its beacon the same with SSID 9. No slots on VARA FM.
+      mycall=$(conf_get mycall); mycall=${mycall^^}; mycall=${mycall%%-*}; [ -n "$mycall" ] || fail "no mycall in $CONF_DIR/d750ctrl.conf"
+      frame="CQFRAME $mycall"; [ "$1" = beacon ] && frame="$frame-9"
       bc=$(ask BC); tx=$(field "$(body "$bc")" 2); fq=$(ask "FQ $tx"); hz=$(field "$(body "$fq")" 2)
       say "transmit band $(band_letter "$tx") at $(mhz "$hz") MHz"
-      [ "$DRY" = 1 ] && { say "would send one CQ frame through xara"; exit 0; }
-      (printf 'CQFRAME KD7SWH\r'; sleep 6) | nc -w 3 127.0.0.1 8300 | tr '\r' '\n' | grep -E 'PTT|OK|PENDING' | paste -sd' ' - | sed 's/^/xara: /'
+      [ "$DRY" = 1 ] && { say "would send one VarAC $1 frame through xara: $frame"; exit 0; }
+      systemctl --user is-active --quiet xara.service || fail "xara is not running"
+      (printf '%s\r' "$frame"; sleep 6) | nc -w 3 127.0.0.1 8300 | tr '\r' '\n' | grep -E 'PTT|OK|PENDING' | paste -sd' ' - | sed 's/^/xara: /'
       sleep 1; f="$LOGDIR/d750d-$(date +%F).txt"; grep -E ' key in | unkey in ' "$f" | tail -2 | sed 's/^/daemon: /' ;;
-    *) usage "vara fm|hf|off|status|cq" ;;
+    *) usage "vara fm|hf|off|status|cq|beacon" ;;
   esac ;;
 
 fixup)
