@@ -1,0 +1,4 @@
+#!/bin/sh
+# aprschat: APRS messages from the terminal, through d750-aprs. aprschat --help for the keys.
+here=$(dirname "$(readlink -f "$0")")
+exec python3 -I "$here/aprschat.py" "$@"

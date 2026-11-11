@@ -7,8 +7,8 @@ set -u
 here=$(dirname "$(readlink -f "$0")")
 call=${1:-}
 mkdir -p "$HOME/.local/bin" "$HOME/.config/systemd/user" "$HOME/.config/d750ctrl" "$HOME/.local/share/d750ctrl/log"
-for c in d750 d750ctrl d750-sstv d750-rtty; do ln -sf "$here/$c" "$HOME/.local/bin/$c"; done
-echo "1. d750, d750ctrl, d750-sstv and d750-rtty linked into ~/.local/bin"
+for c in d750 d750ctrl d750-sstv d750-rtty d750-aprs aprschat; do ln -sf "$here/$c" "$HOME/.local/bin/$c"; done
+echo "1. d750, d750ctrl, d750-sstv, d750-rtty, d750-aprs and aprschat linked into ~/.local/bin"
 sed "s|@REPO@|$here|" "$here/d750d.service.in" > "$HOME/.config/systemd/user/d750d.service"
 systemctl --user daemon-reload
 if systemctl --user is-active --quiet d750d.service; then systemctl --user restart d750d.service; else systemctl --user enable --now d750d.service >/dev/null 2>&1; fi

@@ -4,6 +4,7 @@ Run: python3 -I d750-aprs-test.py. Nothing here opens a port or transmits.
 """
 
 import importlib.util
+import json
 import os
 import sys
 
@@ -232,6 +233,40 @@ with tempfile.TemporaryDirectory() as tmp:
     d.push("heard", "x")
     check("no push while the push file is missing", calls, [])
 aprs._quietly, aprs.shutil.which = real, real_which
+
+# Messages: long text in parts, APRS-IS lines, and the history aprschat reads.
+check("short message, one part", aprs.message_parts("hello there"), ["hello there"])
+long = "word " * 30
+parts = aprs.message_parts(long)
+check("long message in parts of at most 67", (len(parts), max(len(x) for x in parts)), (3, 64))
+check("parts keep every word", " ".join(parts), long.strip())
+check("APRS's own characters replaced", aprs.message_parts("a{b|c~d"), ["a(b/c-d"])
+check("APRS-IS line", aprs.parse_tnc2("W7XYZ>APRS,TCPIP*,qAC,T2TEST::N0CALL-2 :hi{3"),
+      ("W7XYZ", "APRS", [("TCPIP", True), ("qAC", False), ("T2TEST", False)], ":N0CALL-2 :hi{3"))
+check("not an APRS-IS line", aprs.parse_tnc2("# aprsc 2.1"), None)
+with tempfile.TemporaryDirectory() as tmp:
+    aprs.STATE, aprs.MESSAGES = os.path.join(tmp, "state.json"), os.path.join(tmp, "messages.jsonl")
+    d = aprs.Daemon(dict(aprs.DEFAULTS, call=me, transmit="on", notify="off"))
+    d.say = d.raw = lambda *a: None
+    sent = []
+    d.send_frame = lambda info, path=None, why="": sent.append(info) or True
+    ids = d.send_message("w7xyz", "hello")
+    d._for_us(aprs.parse("W7XYZ", "APRS", f":{me:<9}:ack{ids[0]}"))
+    d._for_us(aprs.parse("W7XYZ", "APRS", f":{me:<9}:how are you{{7"))
+    class FakeWriter:
+        def __init__(self): self.lines = []
+        def write(self, b): self.lines.append(b.decode("latin-1").strip())
+    d.is_writer = FakeWriter()
+    d._from_is(f"K7ABC>APRS,TCPIP*,qAC,T2TEST::{me:<9}:from the web{{9")
+    check("ack through APRS-IS for a message from the internet", d.is_writer.lines, [f"{me}>APZ750,TCPIP*::K7ABC    :ack9"])
+    d.is_writer = None
+    events = [json.loads(x) for x in open(aprs.MESSAGES)]
+    check("history: queued, acked, two in", [(e["dir"], e.get("state") or e.get("via"), e["call"]) for e in events],
+          [("out", "queued", "W7XYZ"), ("out", "acked", "W7XYZ"), ("in", "rf", "W7XYZ"), ("in", "is", "K7ABC")])
+    check("ack on the air for a message heard on the air", sent, [f":W7XYZ    :ack7"])
+    check("the outbox is empty after the ack", d.outbox, {})
+    d._for_us(aprs.parse("W7XYZ", "APRS", f":{me:<9}:how are you{{7"))
+    check("a repeat of the same message is not a new one", len([x for x in open(aprs.MESSAGES)]), 4)
 
 # The settings file holds the home position: set_conf keeps it owner only and keeps the other lines.
 import tempfile

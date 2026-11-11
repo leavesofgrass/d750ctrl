@@ -28,6 +28,7 @@ from datetime import datetime
 CONF = os.path.expanduser("~/.config/d750ctrl/aprs.conf")
 STATE = os.path.expanduser("~/.local/state/d750ctrl/aprs.json")
 LOGDIR = os.path.expanduser("~/.local/share/d750ctrl/log")
+MESSAGES = os.path.join(LOGDIR, "messages.jsonl")   # every APRS message to or from us, one JSON event a line
 SOCK = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or os.path.expanduser("~/.cache"), "d750-aprs.sock")
 VERSION = "0.2.0"
 BEACON_WAIT = 60          # seconds to watch APRS-IS for our beacon after it goes out on the air
@@ -709,6 +710,29 @@ def beacon_info(conf):
     return f"={lat_text(lat)}{sym[0]}{lon_text(lon)}{sym[1]}{conf['comment']}"[:80]
 
 
+def message_parts(text, limit=67):
+    """A message as parts of at most limit characters, split between words, without the characters APRS
+    keeps for itself (| ~ {) or control characters."""
+    text = "".join(ch for ch in text if ch.isprintable()).translate(str.maketrans("|~{", "/-(")).strip()
+    parts = []
+    while len(text) > limit:
+        cut = text.rfind(" ", 0, limit + 1)
+        cut = cut if cut > limit // 2 else limit
+        parts.append(text[:cut].rstrip())
+        text = text[cut:].lstrip()
+    return parts + ([text] if text else [])
+
+
+def parse_tnc2(line):
+    """An APRS-IS line, SOURCE>DEST,PATH:info, as (source, dest, [(digi, used)], info), or None."""
+    head, sep, info = line.partition(":")
+    if not sep or ">" not in head:
+        return None
+    source, _, rest = head.partition(">")
+    dest, *path = rest.split(",")
+    return source, dest, [(d.rstrip("*"), d.endswith("*")) for d in path], info
+
+
 def message_info(to, text, msgid):
     return f":{to.upper():<9}:{text[:67]}" + (f"{{{msgid}" if msgid else "")
 
@@ -822,16 +846,34 @@ class Daemon:
                 token = self.beacon_watch = time.time()
                 asyncio.get_running_loop().call_later(BEACON_WAIT, self._beacon_check, token)
 
-    def send_message(self, to, text):
-        self.state["msgno"] = self.state.get("msgno", 0) % 999 + 1
-        self._save_state()
-        msgid = str(self.state["msgno"])
-        self.outbox[msgid] = {"to": to.upper(), "text": text, "tries": 0, "next": time.time()}
-        wait = "" if self.transmit else " It waits until transmitting is on."
-        self.say(f"Message to {to.upper()} queued: {text}.{wait}")
+    def msg_event(self, **event):
+        """One line in the message history that aprschat reads: time, direction, call, and what happened."""
+        event = {"t": round(time.time(), 1), **event}
+        os.makedirs(LOGDIR, exist_ok=True)
+        with open(MESSAGES, "a", encoding="utf-8") as f:
+            f.write(json.dumps(event, ensure_ascii=False) + "\n")
 
-    def _ack(self, to, msgid):
-        self.send_frame(f":{to.upper():<9}:ack{msgid}", why=f"the acknowledgement to {to}")
+    def send_message(self, to, text):
+        """Queue a message, in parts when it is long; the message numbers, one per part."""
+        ids = []
+        for part in message_parts(text):
+            self.state["msgno"] = self.state.get("msgno", 0) % 999 + 1
+            msgid = str(self.state["msgno"])
+            self.outbox[msgid] = {"to": to.upper(), "text": part, "tries": 0, "next": time.time()}
+            self.msg_event(dir="out", call=to.upper(), id=msgid, text=part, state="queued")
+            wait = "" if self.transmit else " It waits until transmitting is on."
+            self.say(f"Message to {to.upper()} queued: {part}.{wait}")
+            ids.append(msgid)
+        self._save_state()
+        return ids
+
+    def _ack(self, to, msgid, via="rf"):
+        """Acknowledge the way the message came: on the air, or through APRS-IS."""
+        info = f":{to.upper():<9}:ack{msgid}"
+        if via == "is" and self.is_writer:
+            self._is_send(f"{self.call}>{self.conf['tocall']},TCPIP*:{info}")
+        else:
+            self.send_frame(info, why=f"the acknowledgement to {to}")
 
     # -- receiving
     def on_frame(self, frame, from_client=None):
@@ -855,25 +897,38 @@ class Daemon:
         if line:
             self.say(line + (f", {note}" if note else ""))
 
-    def _for_us(self, p):
+    def _for_us(self, p, via="rf"):
         src = p["source"].upper()
         if p["type"] == "message":
             key = (src, p.get("id"), p["text"])
             fresh = key not in self.seen_msgs or time.time() - self.seen_msgs[key] > 1800
             self.seen_msgs[key] = time.time()
             if fresh:
-                self.say(f"Message from {src}: {p['text']}")
+                self.say(f"Message from {src}{' through the internet' if via == 'is' else ''}: {p['text']}")
+                self.msg_event(dir="in", call=src, id=p.get("id"), text=p["text"], via=via)
                 self.notify(self.conf["notify_topic"], f"APRS from {src}", p["text"], 4)
             if p.get("id"):
-                self._ack(src, p["id"])
+                self._ack(src, p["id"], via)
         elif p["type"] == "ack":
             m = self.outbox.pop(p["id"], None)
             if m:
                 self.say(f"Message to {m['to']} acknowledged")
+                self.msg_event(dir="out", call=m["to"], id=p["id"], state="acked")
         elif p["type"] == "rej":
             m = self.outbox.pop(p["id"], None)
             if m:
                 self.say(f"Message to {m['to']} was refused")
+                self.msg_event(dir="out", call=m["to"], id=p["id"], state="rejected")
+
+    def _from_is(self, line):
+        """A line from APRS-IS: a message, acknowledgement or refusal for us, sent through the internet."""
+        d = parse_tnc2(line)
+        if not d:
+            return
+        p = parse(d[0], d[1], d[3])
+        if p["type"] in ("message", "ack", "rej") and p.get("to", "").upper() in (self.call, self.call.split("-")[0]):
+            self.raw("IS in " + line)
+            self._for_us(p, via="is")
 
     # -- the digipeater
     def _digi_consider(self, frame):
@@ -1047,7 +1102,9 @@ class Daemon:
             try:
                 reader, writer = await asyncio.wait_for(asyncio.open_connection(host, int(port)), 30)
                 await asyncio.wait_for(reader.readline(), 30)
-                writer.write(f"user {self.call} pass {passcode} vers d750-aprs {VERSION}\r\n".encode())
+                base = self.call.split("-")[0]
+                # g/ brings messages addressed to us that were sent through the internet, aprs.fi for one.
+                writer.write(f"user {self.call} pass {passcode} vers d750-aprs {VERSION} filter g/{self.call}/{base}\r\n".encode())
                 await writer.drain()
                 while True:
                     # Servers send a keepalive line every 20 seconds; two minutes of silence is a dead link.
@@ -1055,6 +1112,9 @@ class Daemon:
                     if not raw:
                         raise ConnectionError("the server closed the connection")
                     text = raw.decode("latin-1").strip()
+                    if text and not text.startswith("#"):
+                        self._from_is(text)
+                        continue
                     if not text.startswith("# logresp"):
                         continue
                     if " verified" not in text:
@@ -1174,6 +1234,7 @@ class Daemon:
                     if m["tries"] >= 5:
                         self.outbox.pop(msgid)
                         self.say(f"Message to {m['to']} was not acknowledged after 5 tries")
+                        self.msg_event(dir="out", call=m["to"], id=msgid, state="failed")
                         self.notify(self.conf["notify_topic"], f"APRS message to {m['to']} not acknowledged",
                                     f"After 5 tries: {m['text']}", 3)
                         continue
@@ -1181,6 +1242,7 @@ class Daemon:
                         m["tries"] += 1
                         m["next"] = now + 30 * (2 ** (m["tries"] - 1))
                         self.say(f"Message to {m['to']} sent, try {m['tries']}")
+                        self.msg_event(dir="out", call=m["to"], id=msgid, state="sent", tries=m["tries"])
                     else:
                         m["next"] = now + 60
             await asyncio.sleep(5)
@@ -1278,8 +1340,9 @@ class Daemon:
         elif cmd == "send":
             to, _, text = rest.partition(" ")
             if to and text:
-                self.send_message(to, text)
-                reply = "Queued."
+                ids = self.send_message(to, text)
+                reply = (f"Queued as {ids[0]}." if len(ids) == 1 else
+                         f"Queued in {len(ids)} parts, as {', '.join(ids)}.") if ids else "Nothing to send."
             else:
                 reply = "Usage: send CALL TEXT"
         writer.write((reply + "\n").encode())

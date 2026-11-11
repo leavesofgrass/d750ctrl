@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- aprschat: APRS messages from the terminal, a curses screen in xarachat's manner and a line mode, through
+  d750-aprs. d750-aprs now keeps a message history (messages.jsonl), sends long messages in parts, takes
+  messages for this station from APRS-IS with a g/ filter on the iGate login, and acknowledges each the
+  way it came. install.sh links d750-aprs and aprschat into ~/.local/bin. 11 new checks in d750-aprs-test.py
+  (118), 18 in aprschat-test.py.
 - d750-aprs reports to Uptime Kuma through push URLs in ~/.config/kuma-push-url-aprs-*: the TNC and the iGate
   every 5 minutes, a packet heard, and a beacon an iGate carried. With notify = on, ntfy notices for APRS
   messages to this station (topic aprs), messages that failed, and the TNC port dropping (alerts). Kuma's

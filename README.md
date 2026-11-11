@@ -67,6 +67,16 @@ and the computer. Both sockets may be connected at once; the udev rule names the
   hears a packet, and when an iGate carries its beacon. With notify = on it posts through the notify
   command: APRS messages for this station to the notify_topic (aprs), a message that failed after 5 tries,
   and the TNC port dropping to the alerts topic. A quick port check on 8001 is not logged.
+- aprschat: APRS messages from the terminal, over SSH or at the console, through d750-aprs. The screen works
+  like xarachat's: the top line says who you are talking with, the conversation is in the middle, and you type
+  on the bottom line, where the cursor stays. Enter sends; F2 talks to another station, F3 lists the
+  conversations, F4 goes to unread ones, F1 helps, F10 quits, Page Up and Page Down scroll. Each of our lines
+  says what became of it: waiting, sent and which try, acknowledged, refused, or not acknowledged after 5
+  tries. `aprschat --line CALL` prints one event per line for a screen reader, with /to CALL, /list and
+  /quit. Messages longer than 67 characters go in parts. d750-aprs keeps every message event in
+  ~/.local/share/d750ctrl/log/messages.jsonl, and with the iGate on it also takes messages for this station
+  sent through the internet, from aprs.fi for one, and acknowledges those the same way. 18 checks in
+  aprschat-test.py, one of them driving the screen in a pseudo terminal.
 - probe.py: asks the radio, read only, which commands it answers and writes the table the verbs rely on.
 - d750-sim.py, test-env.sh, tests.sh, d750ctrl-test.py, modes-test.sh: a pretend radio on a pseudo terminal
   and the tests that run against it, so nothing here needs a radio to be proven.
