@@ -9,6 +9,8 @@
 - The TNC's USB layout, found by listening: menu 983 on USB (Main Unit) puts KISS on the base unit's port,
   menu 984 on USB (Panel) puts the APRS mode's packet text on the control head's port beside CAT. d750-aprs
   raises DTR and RTS (tnc_lines = low holds them low) and counts the bytes from the TNC in its status line.
+- d750-aprs keeps the time of its last beacon, so a restart no longer sends an extra one, and its settings
+  writer keeps aprs.conf owner only (mode 600): the file holds the exact home position.
 - udev: the control head's port (2166:9030) is /dev/d750-cat and the base unit's (2166:9032) /dev/d750-tnc. The
   rules file had them the other way round; the working system rule was already this way.
 - VarAC as an option: o opens xarachat with VarAC's framing on, in the varac window, or openslot when the

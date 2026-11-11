@@ -63,8 +63,11 @@ def set_conf(key, value, path=CONF):
     if not done:
         lines.append(f"{key} = {value}")
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path + ".tmp", "w", encoding="utf-8") as f:
+    # The settings hold the exact home position: owner only, whatever the umask.
+    fd = os.open(path + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
+    os.chmod(path + ".tmp", 0o600)
     os.replace(path + ".tmp", path)
 
 
@@ -559,7 +562,7 @@ class Daemon:
         self.outbox = {}
         self.seen_msgs = {}
         self.state = self._load_state()
-        self.last_beacon = 0.0
+        self.last_beacon = float(self.state.get("last_beacon", 0.0))   # kept, so a restart keeps the schedule
         self.started = time.time()
         self.heard = 0
         self.bytes_in = 0
@@ -610,6 +613,8 @@ class Daemon:
             return
         if self.send_frame(beacon_info(self.conf), why="the home beacon"):
             self.last_beacon = time.time()
+            self.state["last_beacon"] = self.last_beacon
+            self._save_state()
             self.say(f"Beacon sent: {self.call} at home, path {','.join(self.path)}")
 
     def send_message(self, to, text):
@@ -716,14 +721,12 @@ class Daemon:
 
     async def _timers(self):
         interval = max(10, int(self.conf["interval"])) * 60
-        first = True
         while True:
             now = time.time()
             if self.transmit and self.home and self.serial:
-                due = now - self.last_beacon >= interval
-                if (first and now - self.started > 20) or due:
+                # Due by the kept time of the last beacon; 20 seconds after a start to let the TNC settle.
+                if now - self.last_beacon >= interval and now - self.started > 20:
                     self.beacon()
-                    first = False
             for msgid, m in list(self.outbox.items()):
                 if self.transmit and now >= m["next"]:
                     if m["tries"] >= 5:

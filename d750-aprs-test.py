@@ -135,5 +135,15 @@ check("directions", [aprs.dir_word(d) for d in (0, 44, 46, 180, 315)], ["north",
 km, brg = aprs.distance_bearing(45.0, -122.0, 46.0, -122.0)
 check("one degree of latitude", (round(km), round(brg)), (111, 0))
 
+# The settings file holds the home position: set_conf keeps it owner only and keeps the other lines.
+import tempfile
+with tempfile.TemporaryDirectory() as tmp:
+    path = os.path.join(tmp, "aprs.conf")
+    open(path, "w").write("# note\ncall = N0CALL-2\ncomment = old\n")
+    os.chmod(path, 0o644)
+    aprs.set_conf("comment", "new text", path)
+    check("set_conf keeps the file owner only", oct(os.stat(path).st_mode & 0o777), "0o600")
+    check("set_conf changes one line", open(path).read(), "# note\ncall = N0CALL-2\ncomment = new text\n")
+
 print(f"{passed} passed, {failed} failed.")
 sys.exit(1 if failed else 0)
