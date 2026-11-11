@@ -6,6 +6,9 @@ APRS messages, and shares the TNC with other programs on KISS TCP.
 
 Nothing transmits until transmitting is switched on. With it off, beacons,
 acknowledgements, messages and frames from KISS clients are all held back.
+
+As a receive-only iGate (igate = rx) it also passes what the radio hears to
+APRS-IS, by the usual rules, and never transmits anything from the internet.
 """
 
 import asyncio
@@ -21,6 +24,7 @@ CONF = os.path.expanduser("~/.config/d750ctrl/aprs.conf")
 STATE = os.path.expanduser("~/.local/state/d750ctrl/aprs.json")
 LOGDIR = os.path.expanduser("~/.local/share/d750ctrl/log")
 SOCK = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or os.path.expanduser("~/.cache"), "d750-aprs.sock")
+VERSION = "0.2.0"
 
 DEFAULTS = {
     "call": "N0CALL",
@@ -36,6 +40,10 @@ DEFAULTS = {
     "units": "mi",
     "tocall": "APZ750",
     "tnc_lines": "raised",
+    "igate": "off",
+    "aprsis_server": "noam.aprs2.net:14580",
+    "aprsis_pass": "",
+    "aprsis_beacon": "off",
 }
 
 # ---------------------------------------------------------------- settings
@@ -176,6 +184,38 @@ def tnc2(source, dest, digis, info):
     last_rep = max((n for n, (_, rep) in enumerate(digis) if rep), default=-1)
     path = [d + ("*" if n == last_rep else "") for n, (d, _) in enumerate(digis)]
     return f"{source}>{','.join([dest] + path)}:{info}"
+
+
+# ---------------------------------------------------------------- APRS-IS
+
+NOGATE = {"TCPIP", "TCPXX", "NOGATE", "RFONLY"}
+
+
+def aprsis_passcode(call):
+    """The APRS-IS passcode for a call sign: the usual hash of the call without its SSID."""
+    c = call.split("-")[0].upper()
+    h = 0x73E2
+    for i in range(0, len(c), 2):
+        h ^= ord(c[i]) << 8
+        if i + 1 < len(c):
+            h ^= ord(c[i + 1])
+    return h & 0x7FFF
+
+
+def igate_line(source, dest, digis, info, igate_call):
+    """The APRS-IS line for a packet heard on the air, or None when the iGate rules say not to gate it.
+
+    Not gated: an empty packet, a query (?), a third-party packet (}), a packet with NUL in it, and one
+    whose path names TCPIP, TCPXX, NOGATE or RFONLY. The information field ends at the first line break.
+    """
+    info = re.split(r"[\r\n]", info, maxsplit=1)[0]
+    if not info or info[0] in "?}" or "\x00" in info:
+        return None
+    if any(d.split("-")[0].upper() in NOGATE for d, _ in digis):
+        return None
+    last_rep = max((n for n, (_, rep) in enumerate(digis) if rep), default=-1)
+    path = [d + ("*" if n == last_rep else "") for n, (d, _) in enumerate(digis)]
+    return f"{source}>{','.join([dest] + path + ['qAR', igate_call])}:{info}"
 
 
 # ---------------------------------------------------------------- APRS parsing
@@ -566,6 +606,13 @@ class Daemon:
         self.started = time.time()
         self.heard = 0
         self.bytes_in = 0
+        self.igate = conf["igate"].lower() in ("rx", "on", "yes")
+        self.is_writer = None          # the APRS-IS connection, when logged in and verified
+        self.is_server = ""
+        self.is_task = None
+        self.is_problem = None
+        self.gated = 0
+        self.gate_seen = {}
 
     # -- state, logs
     def _load_state(self):
@@ -616,6 +663,8 @@ class Daemon:
             self.state["last_beacon"] = self.last_beacon
             self._save_state()
             self.say(f"Beacon sent: {self.call} at home, path {','.join(self.path)}")
+            if self.is_writer and self.conf["aprsis_beacon"].lower() in ("on", "yes"):
+                self._is_send(f"{self.call}>{self.conf['tocall']},TCPIP*:{beacon_info(self.conf)}")
 
     def send_message(self, to, text):
         self.state["msgno"] = self.state.get("msgno", 0) % 999 + 1
@@ -636,6 +685,8 @@ class Daemon:
         source, dest, digis, info = d
         self.raw("RX " + tnc2(source, dest, digis, info))
         self.heard += 1
+        if self.is_writer:
+            self._gate(source, dest, digis, info)
         p = parse(source, dest, info)
         if p["type"] in ("message", "ack", "rej") and p.get("to", "").upper() in (self.call, self.call.split("-")[0]):
             self._for_us(p)
@@ -663,12 +714,104 @@ class Daemon:
             if m:
                 self.say(f"Message to {m['to']} was refused")
 
+    # -- the iGate
+    def _gate(self, source, dest, digis, info):
+        line = igate_line(source, dest, digis, info, self.call)
+        if not line:
+            return
+        now = time.time()
+        self.gate_seen = {k: t for k, t in self.gate_seen.items() if now - t < 30}
+        key = (source.upper(), line.split(":", 1)[1])
+        if key in self.gate_seen:
+            return
+        self.gate_seen[key] = now
+        if self._is_send(line):
+            self.gated += 1
+
+    def _is_send(self, line):
+        try:
+            self.is_writer.write(line.encode("latin-1", "replace") + b"\r\n")
+        except Exception:
+            return False
+        self.raw("IS " + line)
+        return True
+
+    def _is_say(self, problem):
+        """Say an APRS-IS problem once, not on every retry."""
+        if problem != self.is_problem:
+            self.say(problem)
+            self.is_problem = problem
+
+    def igate_start(self):
+        if self.is_task is None or self.is_task.done():
+            self.is_task = asyncio.get_running_loop().create_task(self._aprsis())
+
+    def igate_stop(self):
+        if self.is_task:
+            self.is_task.cancel()
+            self.is_task = None
+        if self.is_writer:
+            try:
+                self.is_writer.close()
+            except Exception:
+                pass
+        self.is_writer = None
+        self.is_problem = None
+
+    async def _aprsis(self):
+        host, _, port = self.conf["aprsis_server"].rpartition(":")
+        passcode = self.conf["aprsis_pass"].strip()
+        if not passcode:
+            self.say("The iGate is on, but aprsis_pass is not set in aprs.conf, so nothing is gated.")
+            return
+        wait = 10
+        while True:
+            writer = None
+            try:
+                reader, writer = await asyncio.wait_for(asyncio.open_connection(host, int(port)), 30)
+                await asyncio.wait_for(reader.readline(), 30)
+                writer.write(f"user {self.call} pass {passcode} vers d750-aprs {VERSION}\r\n".encode())
+                await writer.drain()
+                while True:
+                    # Servers send a keepalive line every 20 seconds; two minutes of silence is a dead link.
+                    raw = await asyncio.wait_for(reader.readline(), 120)
+                    if not raw:
+                        raise ConnectionError("the server closed the connection")
+                    text = raw.decode("latin-1").strip()
+                    if not text.startswith("# logresp"):
+                        continue
+                    if " verified" not in text:
+                        self._is_say("APRS-IS did not verify the passcode, so nothing is gated. Check aprsis_pass.")
+                        writer.close()
+                        await asyncio.sleep(1800)
+                        break
+                    self.is_server = text.rsplit("server", 1)[-1].strip() if "server" in text else host
+                    self.is_writer = writer
+                    self.is_problem = None
+                    wait = 10
+                    self.say(f"iGate on: passing what the radio hears to APRS-IS, server {self.is_server}.")
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                why = str(e) or type(e).__name__
+                self._is_say(f"Lost APRS-IS ({why}). Trying again, every few minutes at most.")
+            self.is_writer = None
+            if writer:
+                try:
+                    writer.close()
+                except Exception:
+                    pass
+            await asyncio.sleep(wait)
+            wait = min(wait * 2, 600)
+
     # -- the loops
     async def run(self):
         import serial
         self.say(f"d750-aprs for {self.call} starting. Transmitting is {'on' if self.transmit else 'off'}.")
         await self._start_servers()
         asyncio.get_running_loop().create_task(self._timers())
+        if self.igate:
+            self.igate_start()
         while True:
             try:
                 s = serial.Serial()
@@ -791,10 +934,20 @@ class Daemon:
             up = int((time.time() - self.started) / 60)
             reply = (f"{self.call}: TNC {'connected' if self.serial else 'not connected'}, transmitting "
                      f"{'on' if self.transmit else 'off'}, {self.heard} packet{'' if self.heard == 1 else 's'} heard in {up} minute{'' if up == 1 else 's'} from {self.bytes_in} bytes, "
-                     f"{len(self.clients)} KISS programs, {len(self.outbox)} messages waiting.")
+                     f"{len(self.clients)} KISS programs, {len(self.outbox)} messages waiting. "
+                     + (f"iGate on, server {self.is_server}, {self.gated} gated." if self.is_writer else
+                        "iGate on, not connected to APRS-IS." if self.igate else "iGate off."))
         elif cmd == "beacon":
             self.beacon("by hand")
             reply = "Done."
+        elif cmd == "igate":
+            self.igate = rest == "on"
+            if self.igate:
+                self.igate_start()
+            else:
+                self.igate_stop()
+                self.say("iGate off.")
+            reply = f"iGate {'on' if self.igate else 'off'}."
         elif cmd == "transmit":
             self.transmit = rest == "on"
             self.say(f"Transmitting is now {'on' if self.transmit else 'off'}.")
@@ -820,6 +973,7 @@ USAGE = """d750-aprs: APRS through the TM-D750's TNC in KISS mode.
   d750-aprs status             the daemon's state
   d750-aprs beacon             send the home beacon now
   d750-aprs transmit on|off    allow or stop every transmission: beacons, messages, acks, KISS programs
+  d750-aprs igate on|off       pass what the radio hears to APRS-IS (receive-only; needs aprsis_pass)
   d750-aprs send CALL TEXT     send an APRS message, retried until acknowledged
 Settings: ~/.config/d750ctrl/aprs.conf. Logs: ~/.local/share/d750ctrl/log/aprs-DATE.txt."""
 
@@ -877,6 +1031,9 @@ def main(argv):
     elif cmd == "transmit" and len(argv) == 2 and argv[1] in ("on", "off"):
         set_conf("transmit", argv[1])
         return control(f"transmit {argv[1]}")
+    elif cmd == "igate" and len(argv) == 2 and argv[1] in ("on", "off"):
+        set_conf("igate", "rx" if argv[1] == "on" else "off")
+        return control(f"igate {argv[1]}")
     elif cmd in ("status", "beacon"):
         return control(cmd)
     elif cmd == "send" and len(argv) >= 3:

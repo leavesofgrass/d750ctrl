@@ -26,3 +26,12 @@ transmit = off
 kiss_listen = 127.0.0.1:8001
 # Distances and speeds: mi or km.
 units = mi
+
+# Receive-only iGate: rx passes what the radio hears to APRS-IS, off does not. Nothing from the
+# internet is ever transmitted. Change it with: d750-aprs igate on
+igate = off
+aprsis_server = noam.aprs2.net:14580
+# The APRS-IS passcode for your call. Keep this file readable by you only.
+aprsis_pass =
+# on also sends the home beacon to APRS-IS directly, beside the radio beacon.
+aprsis_beacon = off

@@ -9,6 +9,9 @@
 - The TNC's USB layout, found by listening: menu 983 on USB (Main Unit) puts KISS on the base unit's port,
   menu 984 on USB (Panel) puts the APRS mode's packet text on the control head's port beside CAT. d750-aprs
   raises DTR and RTS (tnc_lines = low holds them low) and counts the bytes from the TNC in its status line.
+- d750-aprs is a receive-only iGate when asked: `d750-aprs igate on` passes what the radio hears to APRS-IS
+  (noam.aprs2.net by default) by the usual rules, with the passcode in aprsis_pass. It reconnects by itself,
+  says problems once, and shows the server and the count gated in its status line. 12 new checks.
 - d750-aprs keeps the time of its last beacon, so a restart no longer sends an extra one, and its settings
   writer keeps aprs.conf owner only (mode 600): the file holds the exact home position.
 - udev: the control head's port (2166:9030) is /dev/d750-cat and the base unit's (2166:9032) /dev/d750-tnc. The

@@ -135,6 +135,23 @@ check("directions", [aprs.dir_word(d) for d in (0, 44, 46, 180, 315)], ["north",
 km, brg = aprs.distance_bearing(45.0, -122.0, 46.0, -122.0)
 check("one degree of latitude", (round(km), round(brg)), (111, 0))
 
+# iGate: the passcode hash, and which packets go to APRS-IS and how.
+check("passcode of N0CALL", aprs.aprsis_passcode("N0CALL-2"), 13023)
+heard = [("W7DEN-3", True), ("WIDE2-1", False)]
+check("igate line", aprs.igate_line("N0CALL-9", "APRS", heard, "!4903.50N/07201.75W-Test\r", "N0CALL-2"),
+      "N0CALL-9>APRS,W7DEN-3*,WIDE2-1,qAR,N0CALL-2:!4903.50N/07201.75W-Test")
+check("igate line, direct", aprs.igate_line("N0CALL-9", "APRS", [], ">hi", "N0CALL-2"), "N0CALL-9>APRS,qAR,N0CALL-2:>hi")
+check("igate stars only the last digi used", aprs.igate_line("N0CALL-9", "APRS", [("W7DEN-3", True), ("WIDE2", True)], ">hi", "X"),
+      "N0CALL-9>APRS,W7DEN-3,WIDE2*,qAR,X:>hi")
+for word in ("NOGATE", "RFONLY", "TCPIP", "TCPXX"):
+    check(f"igate skips {word}", aprs.igate_line("N0CALL", "APRS", [(word, False)], ">hi", "X"), None)
+check("igate skips third party", aprs.igate_line("N0CALL", "APRS", [], "}W7XYZ>APRS,TCPIP,N0CALL*:>hi", "X"), None)
+check("igate skips queries", aprs.igate_line("N0CALL", "APRS", [], "?APRS?", "X"), None)
+check("igate skips empty", aprs.igate_line("N0CALL", "APRS", [], "\r", "X"), None)
+mice = "`dGNn\x1cv>/>\"3r}&\r"
+line = aprs.igate_line("N0CALL-7", "T1TS2U", [], mice, "X")
+check("igate keeps Mic-E bytes as heard", line.encode("latin-1"), b"N0CALL-7>T1TS2U,qAR,X:`dGNn\x1cv>/>\"3r}&")
+
 # The settings file holds the home position: set_conf keeps it owner only and keeps the other lines.
 import tempfile
 with tempfile.TemporaryDirectory() as tmp:

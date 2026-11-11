@@ -48,6 +48,11 @@ and the computer. Both sockets may be connected at once; the udev rule names the
   until `d750-aprs transmit on`; with it off, beacons, messages, acknowledgements and frames from KISS programs
   are held back. `d750-aprs listen` follows the packets, `d750-aprs last 20 TEXT` reads today's back, and
   `d750-aprs send CALL TEXT` sends a message. Settings: ~/.config/d750ctrl/aprs.conf, from aprs.conf.example.
+  As a receive-only iGate, `d750-aprs igate on` passes what the radio hears to APRS-IS, marked qAR with this
+  station's call. It skips packets marked NOGATE, RFONLY, TCPIP or TCPXX, queries, third-party packets and
+  repeats within 30 seconds, and never transmits anything from the internet. It needs the APRS-IS passcode in
+  aprsis_pass; aprsis_beacon = on also sends the home beacon to APRS-IS directly. The settings file holds the
+  position and passcode and stays readable by its owner only.
 - probe.py: asks the radio, read only, which commands it answers and writes the table the verbs rely on.
 - d750-sim.py, test-env.sh, tests.sh, d750ctrl-test.py, modes-test.sh: a pretend radio on a pseudo terminal
   and the tests that run against it, so nothing here needs a radio to be proven.
