@@ -6,8 +6,8 @@ busy and transmit lamps, a busy history, the memory channels, the TNC and a scro
 exchange. Everything on the keyboard; the mouse is not needed and not used.
 
   d750ctrl [--ascii] [--theme dark|mono] [--step KHZ]
-  Settings in ~/.config/d750ctrl/d750ctrl.conf: mycall, cmd_port, ptt_port. D750_CMD_PORT and D750_PTT_PORT override;
-  the test bed uses 4543 and 4542.
+  Settings in ~/.config/d750ctrl/d750ctrl.conf: mycall, cmd_port, ptt_port, status_seconds, busy_seconds.
+  D750_CMD_PORT and D750_PTT_PORT override the ports; the test bed uses 4543 and 4542.
 
 Keys, also under ?:
   Tab        switch the active band          Up/Down    frequency one step; PgUp/PgDn ten steps
@@ -102,6 +102,23 @@ CMD_PORT = int(os.environ.get("D750_CMD_PORT", CONFIG.get("cmd_port", "4533")))
 PTT_PORT = int(os.environ.get("D750_PTT_PORT", CONFIG.get("ptt_port", "4532")))
 MYCALL = CONFIG.get("mycall", "").upper() or "N0CALL"
 VARAC_TOOL = (CONFIG.get("varac") or "xarachat").strip().lower()      # what o opens: xarachat (VarAC on) or openslot
+
+
+def conf_seconds(key, default, least):
+    """A time from the settings in seconds, no shorter than least; 0 stays 0 (off). A bad value is the default."""
+    try:
+        v = float(CONFIG.get(key) or default)
+    except ValueError:
+        return default
+    return 0.0 if v <= 0 else max(least, v)
+
+
+# How often the screen reads the radio. Every status_seconds the full sweep, about 15 CAT commands; every
+# busy_seconds just BY 0 and BY 1. busy_seconds = 0, or one as long as the sweep, reads busy with the sweep only.
+# Until November 11 the sweep ran every 0.4 s, about 29 commands a second, and filled d750d's log.
+STATUS_SECONDS = conf_seconds("status_seconds", 2.0, 0.5) or 2.0
+BUSY_SECONDS = conf_seconds("busy_seconds", 1.0, 0.25)
+STATE_SECONDS = 0.5     # PTT and lock come from d750d itself and cost the radio nothing
 # The TM-D750 answers MD with codes 0 to 3 only, learned on the radio on November 8 by ear on a weather broadcast:
 # 0 FM, 1 NFM, 2 AM, 3 DV. The TH-D74 table (DV 1, NFM 6, DR 7) does not apply; DR is not reachable through MD.
 MODES = {0: "FM", 1: "NFM", 2: "AM", 3: "DV"}
@@ -129,6 +146,7 @@ class Daemon:
         self.sock = None
         self.lock = threading.Lock()
         self.log = []
+        self.changed = threading.Event()   # set after a change, so the poll reads the radio again at once
 
     def connect(self):
         self.sock = socket.create_connection(("127.0.0.1", self.port), timeout=5)
@@ -162,7 +180,8 @@ class Daemon:
                 reply = f"ERR {e}"
             self.log.append((time.strftime("%H:%M:%S"), line, reply))
             del self.log[:-200]
-            return reply
+        self.changed.set()
+        return reply
 
 
 def ptt(cmd):
@@ -232,42 +251,57 @@ class Ctl:
 
     # ---- polling ----
     def poll(self):
+        """Read the radio through d750d: the busy flags every BUSY_SECONDS, the rest every STATUS_SECONDS,
+        and both at once after a change from this screen. d750d's state every STATE_SECONDS."""
+        fast = 0 < BUSY_SECONDS < STATUS_SECONDS
+        next_full = next_busy = 0.0
         while not self.quit:
+            now = time.monotonic()
+            full = now >= next_full or self.d.changed.is_set()
+            self.d.changed.clear()
             try:
                 st = self.d.ask("state")
                 self.state = st
                 self.keyed = "; keyed" in st
                 self.locked = "; locked" in st
-                if not self.ident:
-                    r = self.d.ask("ID"); self.ident = r if r.startswith("ID") else ""
-                bc = self.d.ask("BC")
-                if bc.startswith("BC"): self.ctrl, self.tx = int(field(bc, 0)), int(field(bc, 1))
-                for b in self.bands:
-                    r = self.d.ask(f"FQ {b.idx}"); b.hz = int(field(r, 1)) if r.startswith("FQ") else b.hz
-                    r = self.d.ask(f"MD {b.idx}"); b.mode = int(field(r, 1)) if r.startswith("MD") else b.mode
-                    r = self.d.ask(f"SQ {b.idx}"); b.sq = int(field(r, 1)) if r.startswith("SQ") else b.sq
-                    r = self.d.ask(f"BY {b.idx}"); b.busy = int(field(r, 1)) if r.startswith("BY") else 0
-                    b.history.append(b.busy); del b.history[:-60]
-                    r = self.d.ask(f"PC {b.idx}"); b.power = int(field(r, 1)) if r.startswith("PC") else b.power
-                    r = self.d.ask(f"VM {b.idx}"); b.vm = int(field(r, 1)) if r.startswith("VM") else b.vm
-                    if b.vm == 1:
-                        r = self.d.ask(f"MR {b.idx}"); b.mr = r.split(" ", 1)[1] if r.startswith("MR ") else ""
-                    else:
-                        b.mr = ""
-                tn = self.d.ask("TN")
-                if tn.startswith("TN"): self.tnc = (int(field(tn, 0)), int(field(tn, 1)))
-                gp = self.d.ask("GP")
-                self.gps_out = int(field(gp, 1)) if gp.startswith("GP") else None
-                vx = self.d.ask("VX")
-                self.vox = int(vx.split()[1]) if vx.startswith("VX ") else None
+                if full:
+                    next_full = now + STATUS_SECONDS
+                    self.sweep()
+                if full or (fast and now >= next_busy):
+                    next_busy = now + BUSY_SECONDS
+                    for b in self.bands:
+                        r = self.d.ask(f"BY {b.idx}"); b.busy = int(field(r, 1)) if r.startswith("BY") else 0
+                        b.history.append(b.busy); del b.history[:-60]
             except Exception as e:  # noqa: BLE001
                 self.message = f"poll: {e}"
-            if self.ws:
-                self.wtick = getattr(self, "wtick", 0) + 1
-                if self.wtick % 5 == 1:
-                    try: self.windows = [w for w in tmux_windows() if w != "rig"]
-                    except OSError: pass
-            time.sleep(0.4)
+            if full and self.ws:
+                try: self.windows = [w for w in tmux_windows() if w != "rig"]
+                except OSError: pass
+            due = min(next_full, next_busy) if fast else next_full
+            self.d.changed.wait(max(0.05, min(due - time.monotonic(), STATE_SECONDS)))
+
+    def sweep(self):
+        """Everything but the busy flags: about 15 CAT commands."""
+        if not self.ident:
+            r = self.d.ask("ID"); self.ident = r if r.startswith("ID") else ""
+        bc = self.d.ask("BC")
+        if bc.startswith("BC"): self.ctrl, self.tx = int(field(bc, 0)), int(field(bc, 1))
+        for b in self.bands:
+            r = self.d.ask(f"FQ {b.idx}"); b.hz = int(field(r, 1)) if r.startswith("FQ") else b.hz
+            r = self.d.ask(f"MD {b.idx}"); b.mode = int(field(r, 1)) if r.startswith("MD") else b.mode
+            r = self.d.ask(f"SQ {b.idx}"); b.sq = int(field(r, 1)) if r.startswith("SQ") else b.sq
+            r = self.d.ask(f"PC {b.idx}"); b.power = int(field(r, 1)) if r.startswith("PC") else b.power
+            r = self.d.ask(f"VM {b.idx}"); b.vm = int(field(r, 1)) if r.startswith("VM") else b.vm
+            if b.vm == 1:
+                r = self.d.ask(f"MR {b.idx}"); b.mr = r.split(" ", 1)[1] if r.startswith("MR ") else ""
+            else:
+                b.mr = ""
+        tn = self.d.ask("TN")
+        if tn.startswith("TN"): self.tnc = (int(field(tn, 0)), int(field(tn, 1)))
+        gp = self.d.ask("GP")
+        self.gps_out = int(field(gp, 1)) if gp.startswith("GP") else None
+        vx = self.d.ask("VX")
+        self.vox = int(vx.split()[1]) if vx.startswith("VX ") else None
 
     # ---- actions ----
     def say(self, text):

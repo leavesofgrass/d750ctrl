@@ -12,13 +12,17 @@ line, the radio's answer line back, or ERR and a reason. Daemon words: state, lo
 unlock, reconnect, quit.
 
 Safety: unkey at start, when a client drops while keyed, on serial errors, after
-MAX_KEY_SECONDS, and TX is refused while locked. Every exchange is logged with a time
-stamp to ~/.local/share/d750ctrl/log/d750d-DATE.txt. Grown out of a keying shim on Saturday,
-November 7, 2026. Runs as the user service d750d.service.
+MAX_KEY_SECONDS, and TX is refused while locked.
+The log, with a time stamp, in ~/.local/share/d750ctrl/log/d750d-DATE.txt: keying, sets, refusals,
+errors, the serial port opening and closing, and bytes the radio sends unasked, each APRS packet
+as one line. Routine reads on 4533 that the radio answers stay out of it, and the same error
+again is counted, one line a minute. D750_LOG_ALL=1 logs every exchange, as before November 11.
+Grown out of a keying shim on Saturday, November 7, 2026. Runs as the user service d750d.service.
 Environment: D750_PORT (device), D750_PTT_PORT, D750_CMD_PORT, D750_LOG_DIR, D750_BAUD, so a
 second instance can run against the simulator (d750-sim.py) without touching the real one.
 """
 import os
+import re
 import socket
 import sys
 import threading
@@ -45,6 +49,12 @@ LONG_NAMES = {"get_freq": "f", "set_freq": "F", "get_mode": "m", "set_mode": "M"
               "get_ptt": "t", "set_ptt": "T", "get_split_vfo": "s", "set_split_vfo": "S", "get_level": "l",
               "set_level": "L", "get_func": "u", "set_func": "U", "get_info": "_", "quit": "q"}
 UNSAFE = {"TX", "RX", "UP", "DW", "SR", "PS", "0M", "0G"}   # only PTT may key; the rest never go through 4533
+LOG_ALL = os.environ.get("D750_LOG_ALL", "").strip().lower() not in ("", "0", "no", "off", "false")
+REPEAT_SECONDS = 60.0
+# Kenwood reads that take one band or channel number: FQ 0, BY 1, ME 005. With a comma they are sets.
+BAND_READS = {"FQ", "MD", "SQ", "BY", "PC", "VM", "MR", "ME", "SM", "FO"}
+# In APRS mode the radio's TNC prints each packet it hears on the CAT port as a line: CALL>DEST,PATH:INFO
+APRS_LINE = re.compile(rb"[A-Z0-9]{1,6}(-[A-Z0-9]{1,2})?>[A-Z0-9]{1,6}(-[A-Z0-9]{1,2})?(,[A-Za-z0-9-]{1,10}\*?)*:")
 
 
 def log(msg):
@@ -56,6 +66,66 @@ def log(msg):
             f.write(line + "\n")
     except OSError:
         pass
+
+
+def is_read(line):
+    """A Kenwood read: the bare command (BC, TN, GP, VX, ID) or the command and one band or channel (FQ 0, ME 005)."""
+    parts = line.split()
+    if len(parts) == 1:
+        return True
+    return len(parts) == 2 and parts[0].upper() in BAND_READS and parts[1].isdigit()
+
+
+def routine(line, reply):
+    """A read the radio answered with its value: kept out of the log unless D750_LOG_ALL is set.
+    An answer that only echoes the line was an action, and is logged."""
+    if LOG_ALL or not is_read(line) or reply == line:
+        return False
+    word = line.split()[0].upper()
+    return reply.split(" ", 1)[0].upper() == word and len(reply) > len(word)
+
+
+def printable(data):
+    """Packet text for the log: printable ASCII as it is, any other byte as \\xNN."""
+    return "".join(chr(c) if 32 <= c < 127 else f"\\x{c:02x}" for c in data)
+
+
+class Repeats:
+    """The same trouble again and again, on every poll while the radio's port is missing, is logged the
+    first time and then counted: one line a minute says how many more. After a quiet minute the next one
+    is logged in full again. With D750_LOG_ALL every one is logged."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.seen = {}                  # trouble -> [count since the last report, time of the first of them]
+        self.since = time.monotonic()
+
+    def note(self, key, msg):
+        with self.lock:
+            if LOG_ALL or key not in self.seen:
+                self.seen.setdefault(key, [0, 0.0])
+                log(msg)
+                return
+            entry = self.seen[key]
+            if not entry[0]:
+                entry[1] = time.time()
+            entry[0] += 1
+
+    def tick(self, now=False):
+        """Report the counts once a minute, or at once (now=True, when the port opens)."""
+        with self.lock:
+            if not now and time.monotonic() - self.since < REPEAT_SECONDS:
+                return
+            self.since = time.monotonic()
+            for key, (count, first) in list(self.seen.items()):
+                if count:
+                    log(f"repeated {count} more times since {time.strftime('%H:%M:%S', time.localtime(first))}: {key}")
+                    self.seen[key] = [0, 0.0]
+                elif not now:
+                    del self.seen[key]
+
+
+repeats = Repeats()
 
 
 class Radio:
@@ -73,6 +143,7 @@ class Radio:
         try:
             self.ser = serial.Serial(PORT_PATH, BAUD, timeout=0.5, write_timeout=0.5)
             self.ser.reset_input_buffer()
+            repeats.tick(now=True)          # how many times the port was missing, before saying it is back
             log(f"serial port {PORT_PATH} open")
             return True
         except Exception as e:  # noqa: BLE001
@@ -96,17 +167,36 @@ class Radio:
                 waiting = self.ser.in_waiting
                 if waiting:
                     junk = self.ser.read(waiting)
-                    self.unsolicited += len(junk)
-                    log(f"unsolicited {len(junk)} bytes on the port, discarded: {junk[:40]!r}")
+                    if not junk.endswith((b"\r", b"\n")) and cmd not in ("TX", "RX"):
+                        junk += self.ser.read_until(b"\r", 512)    # a line still arriving; keying never waits for it
+                    self.unprompted(junk)
                 self.ser.write(cmd.encode("ascii", "replace") + b"\r")
                 self.ser.flush()
-                reply = self.ser.read_until(b"\r", 200)
+                reply = self.ser.read_until(b"\r", 512)
+                for _ in range(3):                          # packet text that came out ahead of the answer
+                    if not APRS_LINE.match(reply.strip()):
+                        break
+                    self.unprompted(reply)
+                    reply = self.ser.read_until(b"\r", 512)
             except Exception as e:  # noqa: BLE001
                 self.close(f"serial error: {e}")
                 raise OSError(f"serial error: {e}") from e
             text = reply.decode(errors="replace").strip()
             self.last_answer = time.time()
             return text
+
+    def unprompted(self, data):
+        """Bytes the radio sent without being asked. Each APRS packet line is logged as one line,
+        anything else as raw bytes, as before. Line ends alone are counted, not logged."""
+        self.unsolicited += len(data)
+        other = b""
+        for piece, end in re.findall(rb"([^\r\n]*)([\r\n]*)", data):
+            if APRS_LINE.match(piece):
+                log(f"APRS packet on the CAT port: {printable(piece)}")
+            else:
+                other += piece + end
+        if other.strip():
+            log(f"unsolicited {len(other)} bytes on the port, discarded: {other[:40]!r}")
 
     def ptt(self, on):
         if on and self.locked:
@@ -163,6 +253,7 @@ radio = Radio()
 def watchdog():
     while True:
         time.sleep(1.0)
+        repeats.tick()
         since = radio.keyed_since
         if since is not None and time.monotonic() - since > MAX_KEY_SECONDS:
             radio.unkey_quietly(f"watchdog after {MAX_KEY_SECONDS:.0f} s")
@@ -339,11 +430,17 @@ def serve_cmd(conn, peer):
                 continue
             try:
                 reply = radio.command(line)
-                log(f"cmd {line!r} -> {reply!r}")
-                f.write((reply + "\n").encode() if reply else b"ERR no answer\n")
             except OSError as e:
-                log(f"cmd client {peer}: {line!r} failed: {e}")
+                repeats.note(f"{e}", f"cmd client {peer}: {line!r} failed: {e}")
                 f.write(f"ERR {e}\n".encode())
+                continue
+            if not reply:
+                repeats.note("no answer from the radio", f"cmd {line!r} -> no answer from the radio")
+            elif reply in ("N", "?") and is_read(line):
+                repeats.note(f"radio refused {line!r} with {reply!r}", f"cmd {line!r} -> {reply!r}")
+            elif not routine(line, reply):
+                log(f"cmd {line!r} -> {reply!r}")
+            f.write((reply + "\n").encode() if reply else b"ERR no answer\n")
     except Exception as e:  # noqa: BLE001
         log(f"cmd client {peer} dropped: {e}")
     finally:
