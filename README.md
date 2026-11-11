@@ -117,7 +117,8 @@ mode the radio's own APRS screen is off, so `d750 fixup` keeps TNC=2,1.
 The TNC decodes far fewer packets than the squelch opens for: most distant bursts never decode, while a
 station nearby decodes every time. To tell "not decoding" from "not reaching the computer", put the TNC in APRS
 mode with menu 570 RX Beep on All: the radio beeps for each packet it decodes. Listen for many minutes; the
-channel can be quiet for a long while.
+channel can be quiet for a long while. The data band's volume can stay all the way down: the TNC
+decodes with the speaker silent (tested November 11, 2026), but the squelch must still open.
 
 Modes over MD are 0 FM, 1 NFM, 2 AM and 3 DV; the radio refuses anything above 3, so DR is not reachable this way.
 
