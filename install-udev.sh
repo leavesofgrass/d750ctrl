@@ -11,7 +11,7 @@ udevadm control --reload
 udevadm trigger --subsystem-match=tty --action=add
 sleep 1
 echo "1. rule installed for user $user"
-for n in d750-cat d750-head; do
+for n in d750-cat d750-tnc; do
   if [ -e /dev/$n ]; then echo "2. /dev/$n -> $(ls -l /dev/$n | awk '{print $NF}') owned by $(stat -L -c '%U:%G %a' /dev/$n)"; else echo "2. /dev/$n not present: no cable in that socket, or replug it"; fi
 done
 echo "Done."

@@ -1,0 +1,25 @@
+# d750-aprs settings: ~/.config/d750ctrl/aprs.conf. key = value; # starts a comment.
+
+# Your call sign with the SSID this station beacons as.
+call = N0CALL-2
+# The TNC's serial port, from udev/60-d750ctrl.rules.
+tnc = /dev/d750-tnc
+
+# The home position, in decimal degrees: north and east positive.
+lat =
+lon =
+# APRS symbol, table then code: /- is a house.
+symbol = /-
+comment = home station
+# Digipeater path, and minutes between beacons.
+path = WIDE1-1,WIDE2-1
+interval = 30
+
+# Nothing transmits until this is on: beacons, messages, acknowledgements, KISS programs.
+# Change it with: d750-aprs transmit on
+transmit = off
+
+# Where KISS programs can connect, space separated host:port.
+kiss_listen = 127.0.0.1:8001
+# Distances and speeds: mi or km.
+units = mi

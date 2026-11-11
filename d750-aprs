@@ -1,0 +1,4 @@
+#!/bin/sh
+# d750-aprs: APRS through the TM-D750's own TNC in KISS mode. Run with no arguments for help.
+here=$(dirname "$(readlink -f "$0")")
+exec python3 -I "$here/d750-aprs.py" "$@"

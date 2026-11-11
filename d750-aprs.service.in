@@ -1,0 +1,10 @@
+[Unit]
+Description=d750-aprs: APRS through the TM-D750's TNC in KISS mode
+
+[Service]
+ExecStart=@HERE@/d750-aprs daemon
+Restart=on-failure
+RestartSec=15s
+
+[Install]
+WantedBy=default.target

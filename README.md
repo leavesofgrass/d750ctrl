@@ -39,6 +39,15 @@ and the computer. Both sockets may be connected at once; the udev rule names the
   xarachat, VarAC chat, radiogram, SSTV and RTTY in windows of their own (see Jumping between modes).
 - d750-sstv and d750-rtty: send and receive through the radio's sound card, keyed through d750d, with xara
   paused meanwhile. SSTV uses the sstv Python package; RTTY uses rttymodem.py, a Baudot modem written here.
+- d750-aprs: APRS through the radio's own TNC in KISS mode, on the base unit's USB port (/dev/d750-tnc). A
+  user service reads every packet and says it as one plain line in ~/.local/share/d750ctrl/log/aprs-DATE.txt:
+  the call first, then distance and direction from home, speed, status or comment, and whether it was heard
+  direct or through a digipeater. "Our beacon, repeated via W7DEN-3" confirms the home beacon reached a digi.
+  It beacons the home position on a timer, sends APRS messages with retries until acknowledged, acknowledges
+  messages to us, and shares the TNC on KISS TCP port 8001 for YAAC, Xastir, APRSIS32 or Pat. Nothing transmits
+  until `d750-aprs transmit on`; with it off, beacons, messages, acknowledgements and frames from KISS programs
+  are held back. `d750-aprs listen` follows the packets, `d750-aprs last 20 TEXT` reads today's back, and
+  `d750-aprs send CALL TEXT` sends a message. Settings: ~/.config/d750ctrl/aprs.conf, from aprs.conf.example.
 - probe.py: asks the radio, read only, which commands it answers and writes the table the verbs rely on.
 - d750-sim.py, test-env.sh, tests.sh, d750ctrl-test.py, modes-test.sh: a pretend radio on a pseudo terminal
   and the tests that run against it, so nothing here needs a radio to be proven.
@@ -86,6 +95,10 @@ VX and more; d750 probe lists what your firmware answers. Three rules learned th
 - Never run the TNC with the data band's squelch wide open while menu 508 is on Busy: the TNC will not transmit.
 - Keep transmitting handhelds away from the USB leads; a bus reset takes the radio and everything else on it.
 
+The radio shows two USB serial ports. The control head's (USB id 2166:9030, with the sound card) is the CAT
+port, /dev/d750-cat. The base unit's (2166:9032) is the TNC's port in KISS mode, /dev/d750-tnc. d750-aprs opens
+it with DTR and RTS held low. In KISS mode the radio's own APRS screen is off, so `d750 fixup` keeps TNC=2,1.
+
 Modes over MD are 0 FM, 1 NFM, 2 AM and 3 DV; the radio refuses anything above 3, so DR is not reachable this way.
 
 Hamlib's TH-D74 model talks to this radio but takes seconds to unkey, which is why d750d keys with the raw
@@ -98,6 +111,7 @@ TX and RX commands and offers hamlib's protocol on its own port instead.
     python3 d750ctrl-test.py        the screen under a pseudo terminal, 18 checks
     ./modes-test.sh                 RTTY and SSTV round trips over a virtual sink
     .venv/bin/python rttymodem.py selftest
+    python3 -I d750-aprs-test.py    KISS, AX.25, APRS positions, Mic-E, messages and the plain lines, 52 checks
 
 ## License
 
