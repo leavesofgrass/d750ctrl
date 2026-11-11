@@ -28,7 +28,9 @@ and the computer. Both sockets may be connected at once; the udev rule names the
   pick the rig "NET rigctl" and the address 127.0.0.1:4532. VFOA is band A, VFOB band B and the current VFO the
   band that transmits; modes FM, FMN, AM and DSTAR; levels STRENGTH, RAWSTR, RFPOWER and SQL. Port 4533 takes one
   Kenwood command per line and returns the answer. It refuses commands that key or reset the radio on 4533, unkeys on client loss and after 30 seconds,
-  and logs every exchange under ~/.local/share/d750ctrl/log.
+  and logs keying, sets, refusals, errors and bytes the radio sends unasked under ~/.local/share/d750ctrl/log.
+  Reads the radio answers stay out of the log; the same error again is logged once, then counted one line a
+  minute. D750_LOG_ALL=1 logs every exchange.
 - d750: the verbs. status, freq, band, mode, squelch, power, busy, watch, tnc, vara, fixup, mem, gps, vox,
   clock, level, record, ptt off, doctor, probe, log, lock, unlock, raw. Add -n for a dry run of anything that
   changes the radio. Exit 0 Pass, 1 Fail, 2 usage. `d750 vara cq` and `d750 vara beacon` send one VarAC CQ
@@ -83,6 +85,8 @@ back when it ends. The tmux prefix, Ctrl-b, works as usual.
     bluetooth =            the radio's Bluetooth address, for the pairing checks; empty if unpaired
     ptt_port = 4532
     cmd_port = 4533
+    status_seconds = 2     the rig screen reads everything this often
+    busy_seconds = 1       the busy flags of both bands this often; 0 reads them with the rest
     workspace = yes        tmux windows for the tools; no runs everything in one terminal
     rig_key = F9           back to the rig screen from any window
     next_key = F12         step to the next window
@@ -114,7 +118,7 @@ port, /dev/d750-cat. The base unit's (2166:9032) is /dev/d750-tnc. The layout th
 - TNC in KISS mode (TN 2,1): KISS frames arrive on the base unit's port, /dev/d750-tnc, and CAT keeps answering
   on the control head's port. This is what d750-aprs uses.
 - TNC in APRS mode (TN 1,1): each decoded packet arrives as one text line, CALL>DEST,PATH:INFO, on the control
-  head's port beside the CAT answers. d750d logs these as unsolicited bytes and drops them.
+  head's port beside the CAT answers. d750d logs each as one line, APRS packet on the CAT port, and drops it.
 - With menu 984 on USB (Main Unit) and the TNC in KISS mode, CAT moved to the base unit's port and the control
   head's port stopped answering.
 

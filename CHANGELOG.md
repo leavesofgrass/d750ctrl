@@ -33,6 +33,14 @@
   xarachat; F9 comes back to the rig screen and Ctrl-Q in openslot closes its window. openslot reads
   ~/.config/openslot/config.toml, with the xara modem on 8300 and rig_backend = "none" until d750d speaks the
   full rigctld handshake.
+- d750d's log is small again: 44 to 516 MB a day becomes 76 to 215 kB. Reads on 4533 that the radio answers
+  are no longer logged; sets, refusals, errors, keying, the port opening and closing, and bytes sent unasked
+  still are. The same error again, as on every poll while /dev/d750-cat was missing, is logged once and then
+  counted, one line a minute. Each APRS packet line on the CAT port is one log line. D750_LOG_ALL=1 logs every
+  exchange. 15 new checks in tests.sh.
+- d750ctrl reads everything every 2 seconds, the busy flags of both bands every second, and the radio again at
+  once after a change from the screen: about 10 CAT commands a second instead of about 29. Settings
+  status_seconds and busy_seconds. 4 new checks in d750ctrl-test.py.
 
 ## 0.1.0, Sunday, November 8, 2026
 
