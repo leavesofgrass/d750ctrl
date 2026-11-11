@@ -79,6 +79,20 @@ check("mic-e symbol", p["symbol"], "/>")
 check("mic-e status", p["status"], "In Service")
 check("mic-e comment", p["comment"], "hello")
 
+# Mic-E from a TH-D75: type code > and &, altitude after it, a carriage return at the end.
+p = aprs.parse("N0CALL-7", "T1TS2U", "`dGNn v>/>\"3r}146.520MHz T100 +060 hello&\r")
+check("mic-e kenwood comment", p["comment"], "146.520MHz T100 +060 hello")
+check("mic-e kenwood altitude", p.get("alt_m"), 0)
+line = aprs.describe(p, [], None, "mi", "N0CALL-2")
+check("mic-e kenwood line", line, "N0CALL-7 car: 23 mph east, In Service, 146.520MHz T100 +060 hello, direct")
+p = aprs.parse("N0CALL-7", "T1TS2U", "`dGNn v>/>440.475MHz T123 +500n0call@example.org&\r")
+check("frequency field gets a space after it", aprs.describe(p, [], None, "mi", "X"),
+      "N0CALL-7 car: 23 mph east, In Service, 440.475MHz T123 +500 n0call@example.org, direct")
+p = aprs.parse("N0CALL-9", "T1TS2U", "`dGNn v>/`hi there_%")
+check("mic-e yaesu comment", p["comment"], "hi there")
+check("one line, whatever the comment", aprs.describe(aprs.parse("N0CALL", "APRS", ">two\rlines\n"), [], None, "mi", "X"),
+      "N0CALL status: two lines, direct")
+
 # Status, messages, acknowledgements, third party, objects, weather.
 check("status", aprs.parse("N0CALL", "APRS", ">Net tonight 1900")["text"], "Net tonight 1900")
 m = aprs.parse("W7XYZ", "APRS", ":N0CALL-2 :Hello there{12")

@@ -96,8 +96,23 @@ VX and more; d750 probe lists what your firmware answers. Three rules learned th
 - Keep transmitting handhelds away from the USB leads; a bus reset takes the radio and everything else on it.
 
 The radio shows two USB serial ports. The control head's (USB id 2166:9030, with the sound card) is the CAT
-port, /dev/d750-cat. The base unit's (2166:9032) is the TNC's port in KISS mode, /dev/d750-tnc. d750-aprs opens
-it with DTR and RTS held low. In KISS mode the radio's own APRS screen is off, so `d750 fixup` keeps TNC=2,1.
+port, /dev/d750-cat. The base unit's (2166:9032) is /dev/d750-tnc. The layout that works, found November 11,
+2026: menu 983 on USB (Main Unit) and menu 984 on USB (Panel).
+
+- TNC in KISS mode (TN 2,1): KISS frames arrive on the base unit's port, /dev/d750-tnc, and CAT keeps answering
+  on the control head's port. This is what d750-aprs uses.
+- TNC in APRS mode (TN 1,1): each decoded packet arrives as one text line, CALL>DEST,PATH:INFO, on the control
+  head's port beside the CAT answers. d750d logs these as unsolicited bytes and drops them.
+- With menu 984 on USB (Main Unit) and the TNC in KISS mode, CAT moved to the base unit's port and the control
+  head's port stopped answering.
+
+d750-aprs opens the TNC port with DTR and RTS raised; tnc_lines = low in its settings holds them low. In KISS
+mode the radio's own APRS screen is off, so `d750 fixup` keeps TNC=2,1.
+
+The TNC decodes far fewer packets than the squelch opens for: most distant bursts never decode, while a
+station nearby decodes every time. To tell "not decoding" from "not reaching the computer", put the TNC in APRS
+mode with menu 570 RX Beep on All: the radio beeps for each packet it decodes. Listen for many minutes; the
+channel can be quiet for a long while.
 
 Modes over MD are 0 FM, 1 NFM, 2 AM and 3 DV; the radio refuses anything above 3, so DR is not reachable this way.
 

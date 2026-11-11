@@ -35,6 +35,7 @@ DEFAULTS = {
     "kiss_listen": "127.0.0.1:8001",
     "units": "mi",
     "tocall": "APZ750",
+    "tnc_lines": "raised",
 }
 
 # ---------------------------------------------------------------- settings
@@ -300,16 +301,30 @@ def _mice(dest, info):
     std = any("P" <= ch <= "Z" for ch in d[:3])
     if std or bits[:3] == "000":
         out["status"] = MICE_MESSAGES.get(bits[:3], "")
-    comment = info[9:]
+    comment = _mice_type_code(info[9:])
     m = re.search(r"(.{3})\}", comment)
     if m:
         try:
             out["alt_m"] = b91(m.group(1)) - 10000
         except ValueError:
             pass
-        comment = comment[:m.start()] + comment[m.end():]
-    out["comment"] = comment.strip(" >]`'=^")
+        comment = comment[:m.start()] + " " + comment[m.end():]
+    out["comment"] = " ".join(comment.split())
     return out
+
+
+def _mice_type_code(c):
+    """Drop the radio's type code from a Mic-E comment: > and ] for Kenwood, with = ^ or & after
+    (TH-D72, TH-D74, TH-D75, TM-D710); ` and ' with two characters after (Yaesu _x, Byonics |3)."""
+    if c[:1] in (">", "]"):
+        c = c[1:]
+        if c[-1:] in ("=", "^", "&"):
+            c = c[:-1]
+    elif c[:1] in ("`", "'"):
+        c = c[1:]
+        if len(c) >= 2 and c[-2] in "_|":
+            c = c[:-2]
+    return c
 
 
 def _weather(text):
@@ -323,6 +338,7 @@ def _weather(text):
 
 def parse(source, dest, info):
     """What one APRS packet says, as a dict with a "type"."""
+    info = info.rstrip("\r\n")
     p = {"source": source, "dest": dest, "raw": info}
     if not info:
         p["type"] = "empty"
@@ -433,6 +449,16 @@ def heard_via(digis):
 
 def describe(p, digis, home, units, mycall):
     """One plain line for a packet, after the time: the call first, then what it says."""
+    line = _describe(p, digis, home, units, mycall)
+    return " ".join("".join(ch if ch.isprintable() else " " for ch in line).split()) if line else line
+
+
+def _comment(c):
+    """A comment as words: the APRS frequency field (146.520MHz T100 +060) runs straight into the text after it."""
+    return re.sub(r"^(\d{3}\.\d{2,3}MHz(?: [A-Za-z]\w{3})?(?: [+-]\d{3})?)(?=\S)", r"\1 ", c)
+
+
+def _describe(p, digis, home, units, mycall):
     src, kind = p["source"], p["type"]
     via = heard_via(digis) if not p.get("third_party") else "through the internet"
     sym = SYMBOLS.get(p.get("symbol", ""), "")
@@ -455,7 +481,7 @@ def describe(p, digis, home, units, mycall):
             if "wind" in w:
                 parts.append(f"wind {w['wind']} mph {dir_word(w.get('dir', 0))}")
         if p.get("comment"):
-            parts.append(p["comment"][:60])
+            parts.append(_comment(p["comment"])[:60])
         head = f"{src}{' ' + sym if sym else ''}"
         return f"{head}: {', '.join(parts)}, {via}" if parts else f"{head}, {via}"
     if kind == "status":
@@ -468,7 +494,7 @@ def describe(p, digis, home, units, mycall):
         state = "" if p.get("alive", True) else " removed"
         bits = [where] if where else []
         if p.get("comment"):
-            bits.append(p["comment"][:60])
+            bits.append(_comment(p["comment"])[:60])
         return f"Object {p['name']}{state} from {src}" + (f": {', '.join(bits)}" if bits else "")
     if kind == "weather":
         w = p.get("weather", {})
@@ -536,6 +562,7 @@ class Daemon:
         self.last_beacon = 0.0
         self.started = time.time()
         self.heard = 0
+        self.bytes_in = 0
 
     # -- state, logs
     def _load_state(self):
@@ -641,7 +668,10 @@ class Daemon:
             try:
                 s = serial.Serial()
                 s.port, s.baudrate, s.timeout = self.conf["tnc"], 9600, 0
-                s.dtr, s.rts = False, False  # held low, so opening the port never keys the radio
+                # DTR and RTS as most serial programs set them. d750d has opened this radio's ports with
+                # both raised for days without keying it; "low" holds them down instead.
+                up = self.conf.get("tnc_lines", "raised") != "low"
+                s.dtr, s.rts = up, up
                 s.open()
             except Exception as e:
                 why = "is not there yet" if isinstance(e, FileNotFoundError) or "No such file" in str(e) else (
@@ -662,6 +692,8 @@ class Daemon:
                     data = s.read(4096)
                 except Exception:
                     data = None
+                if data:
+                    self.bytes_in += len(data)
                 if data is None:
                     loop.remove_reader(s.fileno())
                     if not lost.done():
@@ -755,7 +787,7 @@ class Daemon:
         if cmd == "status":
             up = int((time.time() - self.started) / 60)
             reply = (f"{self.call}: TNC {'connected' if self.serial else 'not connected'}, transmitting "
-                     f"{'on' if self.transmit else 'off'}, {self.heard} packets heard in {up} minutes, "
+                     f"{'on' if self.transmit else 'off'}, {self.heard} packet{'' if self.heard == 1 else 's'} heard in {up} minute{'' if up == 1 else 's'} from {self.bytes_in} bytes, "
                      f"{len(self.clients)} KISS programs, {len(self.outbox)} messages waiting.")
         elif cmd == "beacon":
             self.beacon("by hand")

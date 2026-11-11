@@ -5,7 +5,10 @@
 - d750-aprs: APRS through the TM-D750's TNC in KISS mode, as a user service. Every packet as one plain line
   with distance and direction from home and how it was heard; the home beacon on a timer; APRS messages sent
   with retries and acknowledged when received; the TNC shared on KISS TCP port 8001. Nothing transmits until
-  `d750-aprs transmit on`. 52 offline checks in d750-aprs-test.py.
+  `d750-aprs transmit on`. 53 offline checks in d750-aprs-test.py.
+- The TNC's USB layout, found by listening: menu 983 on USB (Main Unit) puts KISS on the base unit's port,
+  menu 984 on USB (Panel) puts the APRS mode's packet text on the control head's port beside CAT. d750-aprs
+  raises DTR and RTS (tnc_lines = low holds them low) and counts the bytes from the TNC in its status line.
 - udev: the control head's port (2166:9030) is /dev/d750-cat and the base unit's (2166:9032) /dev/d750-tnc. The
   rules file had them the other way round; the working system rule was already this way.
 - VarAC as an option: o opens xarachat with VarAC's framing on, in the varac window, or openslot when the
