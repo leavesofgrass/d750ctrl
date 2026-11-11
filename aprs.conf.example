@@ -54,3 +54,11 @@ digi_dupe = 30
 # port dropping goes to alerts. off sends none.
 notify = on
 notify_topic = aprs
+
+# After the TNC port drops and returns, send one check beacon 2 minutes later. If no iGate carries it,
+# or two scheduled beacons in a row reach none, run power_cycle_cmd once (at most once in 30 minutes,
+# never while xara is keyed) and tell alerts; with no command set, ask on alerts at priority 5 instead.
+restart_check = on
+# For example: d750-power cycle 10   (the relay on the Leonardo, relay/d750-relay)
+# or a Home Assistant webhook that switches the supply off and on: curl -fsS -m 10 -X POST http://HA:8123/api/webhook/ID
+power_cycle_cmd =

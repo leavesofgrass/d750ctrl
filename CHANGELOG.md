@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Unattended recovery: after the TNC port returns, a check beacon watched on APRS-IS; when the radio is not
+  sending, power_cycle_cmd once in 30 minutes, never while keyed, with ntfy alerts at each step. d750-power and
+  relay/d750-relay.ino: a fail-safe relay on the Leonardo, normally closed, never off for more than 60 s.
+  7 new checks; 125 in all.
 - aprschat: APRS messages from the terminal, a curses screen in xarachat's manner and a line mode, through
   d750-aprs. d750-aprs now keeps a message history (messages.jsonl), sends long messages in parts, takes
   messages for this station from APRS-IS with a g/ filter on the iGate login, and acknowledges each the

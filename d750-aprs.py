@@ -16,7 +16,9 @@ import json
 import math
 import os
 import re
+import shlex
 import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -37,6 +39,8 @@ DIGI_WORDS = {"off": "Digipeater off", "fillin": "Fill-in digipeater", "wide": "
 # Uptime Kuma push URLs, written by ~/lab/kuma/setup-kuma.py. Each push is skipped while its file is missing.
 PUSH_FILES = {w: f"~/.config/kuma-push-url-aprs-{w}" for w in ("tnc", "igate", "heard", "beacon")}
 HEARTBEAT = 300           # seconds between pushes that say the TNC and the iGate link are up
+CHECK_AFTER = 120         # seconds after the radio comes back before the check beacon
+CYCLE_GAP = 1800          # at most one automatic power cycle in this many seconds
 
 
 def _quietly(*cmd_or_url):
@@ -81,6 +85,8 @@ DEFAULTS = {
     "digi_dupe": "30",
     "notify": "on",
     "notify_topic": "aprs",
+    "restart_check": "on",
+    "power_cycle_cmd": "",
 }
 
 # ---------------------------------------------------------------- settings
@@ -768,6 +774,8 @@ class Daemon:
         self.beacon_watch = None
         self.beacon_misses = 0
         self.watch_up = False
+        self.recovery = None           # why we are checking that the radio still sends, while a check runs
+        self.last_cycle = float(self.state.get("last_power_cycle", 0.0))
         self.digi = conf["digi"].lower() if conf["digi"].lower() in DIGI_WORDS else "off"
         self.digi_aliases = [a.strip() for a in conf["digi_aliases"].replace(",", " ").split() if a.strip()]
         self.repeated = 0
@@ -986,6 +994,51 @@ class Daemon:
         tail = "" if self.transmit else ", but transmitting is off, so it repeats nothing"
         return f"{DIGI_WORDS[self.digi]} on{tail}. {self.repeated} repeated."
 
+    # -- after a restart: check that the radio still sends, and power cycle it when it does not
+    def _restart_seen(self):
+        if self.conf["restart_check"].lower() in ("on", "yes"):
+            asyncio.get_running_loop().call_later(CHECK_AFTER, self._check_sending, "the radio came back on USB")
+
+    def _check_sending(self, reason):
+        """One beacon, watched on APRS-IS: the only sure sign that the radio transmits."""
+        if not (self.transmit and self.serial and self.watch_up and self.home):
+            self.say(f"Cannot check that the radio sends, after {reason}: transmitting is off, the TNC is not "
+                     "connected, or the APRS-IS watch is down.")
+            return
+        self.recovery = reason
+        self.say(f"Checking that the radio still sends, after {reason}: one beacon.")
+        self.beacon("check")
+
+    def _keyed(self):
+        try:
+            with socket.create_connection(("127.0.0.1", 4533), 3) as c:
+                c.sendall(b"state\n")
+                return "; keyed" in c.makefile().readline()
+        except OSError:
+            return False
+
+    def _not_sending(self, reason):
+        """The radio sent nothing an iGate heard: power cycle it once, or ask Jon to."""
+        self.recovery = None
+        cmd, now = self.conf["power_cycle_cmd"].strip(), time.time()
+        when = f"{datetime.now():%H:%M}"
+        if cmd and now - self.last_cycle > CYCLE_GAP and not self._keyed():
+            self.last_cycle = now
+            self.state["last_power_cycle"] = now
+            self._save_state()
+            self.say(f"The radio is not sending, after {reason}. Power cycling it: {cmd}")
+            _quietly(*shlex.split(cmd))
+            self.notify("alerts", "TM-D750 power cycled by the station computer",
+                        f"After {reason}, at {when}, its beacon reached no iGate. The station computer ran {cmd} and checks again "
+                        "when the radio is back.", 4)
+            return
+        why = ("no power_cycle_cmd is set" if not cmd else
+               "The station computer already power cycled it in the last 30 minutes" if now - self.last_cycle <= CYCLE_GAP else
+               "xara is transmitting")
+        self.say(f"The radio is not sending, after {reason}, and {why}. Power cycle it by hand.")
+        self.notify("alerts", "TM-D750 is not transmitting",
+                    f"After {reason}, at {when}, its beacon reached no iGate, and {why}. Power cycle the radio.", 5)
+
     # -- the iGate
     def _direct_beacon(self):
         return f"{self.call}>{self.conf['tocall']},TCPIP*:{beacon_info(self.conf)}"
@@ -999,6 +1052,13 @@ class Daemon:
         who = igate_of(line)
         self.say(f"Our beacon reached APRS-IS through {who[1]}." if who else "Our beacon reached APRS-IS.")
         self.push("beacon", f"beacon carried by {who[1]}" if who else "beacon on APRS-IS")
+        if self.recovery:
+            self.say(f"Sending works after {self.recovery}.")
+            if time.time() - self.last_cycle < 900:
+                self.notify("alerts", "TM-D750 sending again",
+                            f"After the power cycle the station computer ran at {datetime.fromtimestamp(self.last_cycle):%H:%M}, "
+                            "its beacon reached APRS-IS again.", 3)
+            self.recovery = None
 
     def _beacon_check(self, token):
         if self.beacon_watch != token:
@@ -1009,9 +1069,10 @@ class Daemon:
             self.say(f"No iGate passed our beacon to APRS-IS in {BEACON_WAIT} seconds. Sent it there directly.")
         else:
             self.say(f"No iGate passed our beacon to APRS-IS in {BEACON_WAIT} seconds.")
-        if self.beacon_misses == 2:
-            self.say("Two beacons in a row reached no iGate. The radio may not be transmitting; "
-                     "if it restarted by itself, power cycle it.")
+        if self.recovery:
+            self._not_sending(self.recovery)
+        elif self.beacon_misses == 2:
+            self._not_sending("two beacons in a row that reached no iGate")
 
     def _gate(self, source, dest, digis, info):
         line = igate_line(source, dest, digis, info, self.call)
@@ -1173,9 +1234,10 @@ class Daemon:
             self._port_problem = None
             self.serial = s
             if getattr(self, "_port_lost", False):
-                self.say(f"Listening on {self.conf['tnc']} again. If the radio restarted by itself, power cycle it: "
-                         "after one such restart it received but did not transmit until it was switched off and on.")
+                self.say(f"Listening on {self.conf['tnc']} again. If the radio restarted by itself it may not "
+                         f"transmit; a check beacon follows in {CHECK_AFTER // 60} minutes.")
                 self._port_lost = False
+                self._restart_seen()
             else:
                 self.say(f"Listening on {self.conf['tnc']}.")
             lost = asyncio.get_running_loop().create_future()

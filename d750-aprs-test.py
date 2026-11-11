@@ -7,6 +7,7 @@ import importlib.util
 import json
 import os
 import sys
+import time
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 spec = importlib.util.spec_from_file_location("aprs", os.path.join(HERE, "d750-aprs.py"))
@@ -267,6 +268,38 @@ with tempfile.TemporaryDirectory() as tmp:
     check("the outbox is empty after the ack", d.outbox, {})
     d._for_us(aprs.parse("W7XYZ", "APRS", f":{me:<9}:how are you{{7"))
     check("a repeat of the same message is not a new one", len([x for x in open(aprs.MESSAGES)]), 4)
+
+# After a restart: power cycle once when the radio does not send, never twice in 30 minutes, never while
+# keyed, and ask Jon when it cannot. A stand-in runs instead of the command; nothing is switched.
+ran, told = [], []
+real = aprs._quietly
+aprs._quietly = lambda *a: ran.append(a)
+with tempfile.TemporaryDirectory() as tmp:
+    aprs.STATE, aprs.MESSAGES = os.path.join(tmp, "state.json"), os.path.join(tmp, "messages.jsonl")
+    d = aprs.Daemon(dict(aprs.DEFAULTS, call=me, transmit="on"))
+    d.say = d.raw = d.push = lambda *a, **k: None
+    d.notify = lambda topic, title, msg, prio=3: told.append((topic, title, prio))
+    d._keyed = lambda: False
+    d._not_sending("a test")
+    check("no command set: ask Jon, priority 5", (ran, told[-1]), ([], ("alerts", "TM-D750 is not transmitting", 5)))
+    d.conf["power_cycle_cmd"] = "d750-power cycle 10"
+    d._not_sending("a test")
+    check("power cycled once", ran, [("d750-power", "cycle", "10")])
+    check("and said so, priority 4", told[-1], ("alerts", "TM-D750 power cycled by the station computer", 4))
+    check("the time is kept", json.load(open(aprs.STATE)).get("last_power_cycle", 0) > 0, True)
+    d._not_sending("a test")
+    check("not twice in 30 minutes: ask Jon", (len(ran), told[-1][2]), (1, 5))
+    d.last_cycle = 0
+    d._keyed = lambda: True
+    d._not_sending("a test")
+    check("never while xara is keyed", len(ran), 1)
+    d._keyed = lambda: False
+    d.last_cycle = time.time() - 60
+    d.recovery = "the radio came back on USB"
+    d.beacon_watch = time.time()                    # the check beacon is being watched
+    d._own_seen(f"{me}>APZ750,WIDE1-1,qAR,K7BCX-10:=hello")
+    check("sending again after the cycle, priority 3", (d.recovery, told[-1]), (None, ("alerts", "TM-D750 sending again", 3)))
+aprs._quietly = real
 
 # The settings file holds the home position: set_conf keeps it owner only and keeps the other lines.
 import tempfile

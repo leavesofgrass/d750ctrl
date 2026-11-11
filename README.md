@@ -67,6 +67,12 @@ and the computer. Both sockets may be connected at once; the udev rule names the
   hears a packet, and when an iGate carries its beacon. With notify = on it posts through the notify
   command: APRS messages for this station to the notify_topic (aprs), a message that failed after 5 tries,
   and the TNC port dropping to the alerts topic. A quick port check on 8001 is not logged.
+- Recovering without anyone there: when the TNC port drops and returns, d750-aprs sends a check beacon 2 minutes
+  later and watches APRS-IS for it. If no iGate carries it, or two scheduled beacons in a row reach none, it runs
+  power_cycle_cmd once (never twice in 30 minutes, never while xara is keyed), says so on ntfy alerts, and
+  checks again when the radio is back; with no command set it asks on alerts at priority 5. `d750-power status`,
+  `cycle 10`, `on` and `id` drive relay/d750-relay/d750-relay.ino on the LattePanda's Leonardo: a relay whose
+  normally closed contact carries the radio's 13.8 V, so a failure anywhere leaves the radio powered.
 - aprschat: APRS messages from the terminal, over SSH or at the console, through d750-aprs. The screen works
   like xarachat's: the top line says who you are talking with, the conversation is in the middle, and you type
   on the bottom line, where the cursor stays. Enter sends; F2 talks to another station, F3 lists the
