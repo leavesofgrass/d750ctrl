@@ -12,6 +12,10 @@
 - d750-aprs is a receive-only iGate when asked: `d750-aprs igate on` passes what the radio hears to APRS-IS
   (noam.aprs2.net by default) by the usual rules, with the passcode in aprsis_pass. It reconnects by itself,
   says problems once, and shows the server and the count gated in its status line. 12 new checks.
+- After each beacon, d750-aprs watches APRS-IS for 60 seconds and says which iGate carried it; with
+  aprsis_beacon = fallback, the default, it sends the beacon to APRS-IS directly when no iGate did.
+- d750-aprs says when the TNC port drops and returns that a radio restarted by itself may need a power
+  cycle before it transmits again, and says so too after two beacons in a row that reach no iGate.
 - d750-aprs keeps the time of its last beacon, so a restart no longer sends an extra one, and its settings
   writer keeps aprs.conf owner only (mode 600): the file holds the exact home position.
 - udev: the control head's port (2166:9030) is /dev/d750-cat and the base unit's (2166:9032) /dev/d750-tnc. The

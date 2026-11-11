@@ -51,7 +51,8 @@ and the computer. Both sockets may be connected at once; the udev rule names the
   As a receive-only iGate, `d750-aprs igate on` passes what the radio hears to APRS-IS, marked qAR with this
   station's call. It skips packets marked NOGATE, RFONLY, TCPIP or TCPXX, queries, third-party packets and
   repeats within 30 seconds, and never transmits anything from the internet. It needs the APRS-IS passcode in
-  aprsis_pass; aprsis_beacon = on also sends the home beacon to APRS-IS directly. The settings file holds the
+  aprsis_pass. After each beacon it watches APRS-IS for 60 seconds and says which iGate carried it, and with
+  aprsis_beacon = fallback, the default, sends it there directly when none did. The settings file holds the
   position and passcode and stays readable by its owner only.
 - probe.py: asks the radio, read only, which commands it answers and writes the table the verbs rely on.
 - d750-sim.py, test-env.sh, tests.sh, d750ctrl-test.py, modes-test.sh: a pretend radio on a pseudo terminal
@@ -99,6 +100,12 @@ VX and more; d750 probe lists what your firmware answers. Three rules learned th
   command to seconds.
 - Never run the TNC with the data band's squelch wide open while menu 508 is on Busy: the TNC will not transmit.
 - Keep transmitting handhelds away from the USB leads; a bus reset takes the radio and everything else on it.
+- If the radio restarts by itself, power cycle it. On November 11, 2026 it restarted while receiving a long
+  frame and came back receiving but not transmitting, with nothing on its display to say so, until it was
+  switched off and on. d750-aprs says so when its TNC port drops and returns, and after two beacons in a
+  row that reach no iGate.
+- BC's second field is not the PTT band: it read 1 while the PTT stayed on band A, and it changed to 1
+  the moment the TNC transmitted on band B. d750d still takes it as the transmit band.
 
 The radio shows two USB serial ports. The control head's (USB id 2166:9030, with the sound card) is the CAT
 port, /dev/d750-cat. The base unit's (2166:9032) is /dev/d750-tnc. The layout that works, found November 11,

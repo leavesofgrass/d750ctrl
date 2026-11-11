@@ -33,5 +33,7 @@ igate = off
 aprsis_server = noam.aprs2.net:14580
 # The APRS-IS passcode for your call. Keep this file readable by you only.
 aprsis_pass =
-# on also sends the home beacon to APRS-IS directly, beside the radio beacon.
-aprsis_beacon = off
+# After each beacon on the air, with the iGate on: watch looks on APRS-IS for 60 seconds and says which
+# iGate carried it; fallback does that and sends it to APRS-IS directly when none did; on always sends it
+# directly; off does neither. The radio never hears its own beacon, so this iGate cannot carry it.
+aprsis_beacon = fallback

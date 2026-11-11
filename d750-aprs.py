@@ -25,6 +25,7 @@ STATE = os.path.expanduser("~/.local/state/d750ctrl/aprs.json")
 LOGDIR = os.path.expanduser("~/.local/share/d750ctrl/log")
 SOCK = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or os.path.expanduser("~/.cache"), "d750-aprs.sock")
 VERSION = "0.2.0"
+BEACON_WAIT = 60          # seconds to watch APRS-IS for our beacon after it goes out on the air
 
 DEFAULTS = {
     "call": "N0CALL",
@@ -43,7 +44,7 @@ DEFAULTS = {
     "igate": "off",
     "aprsis_server": "noam.aprs2.net:14580",
     "aprsis_pass": "",
-    "aprsis_beacon": "off",
+    "aprsis_beacon": "fallback",
 }
 
 # ---------------------------------------------------------------- settings
@@ -216,6 +217,13 @@ def igate_line(source, dest, digis, info, igate_call):
     last_rep = max((n for n, (_, rep) in enumerate(digis) if rep), default=-1)
     path = [d + ("*" if n == last_rep else "") for n, (d, _) in enumerate(digis)]
     return f"{source}>{','.join([dest] + path + ['qAR', igate_call])}:{info}"
+
+
+def igate_of(line):
+    """Who passed a packet to APRS-IS, from the q construct in its path: (q code, call), or None."""
+    header = line.split(":", 1)[0]
+    m = re.search(r",(qA[A-Za-z]),([^,]+)", header)
+    return (m.group(1), m.group(2)) if m else None
 
 
 # ---------------------------------------------------------------- APRS parsing
@@ -613,6 +621,8 @@ class Daemon:
         self.is_problem = None
         self.gated = 0
         self.gate_seen = {}
+        self.beacon_watch = None
+        self.beacon_misses = 0
 
     # -- state, logs
     def _load_state(self):
@@ -663,8 +673,13 @@ class Daemon:
             self.state["last_beacon"] = self.last_beacon
             self._save_state()
             self.say(f"Beacon sent: {self.call} at home, path {','.join(self.path)}")
-            if self.is_writer and self.conf["aprsis_beacon"].lower() in ("on", "yes"):
-                self._is_send(f"{self.call}>{self.conf['tocall']},TCPIP*:{beacon_info(self.conf)}")
+            mode = self.conf["aprsis_beacon"].lower()
+            if self.is_writer and mode in ("on", "yes"):
+                self._is_send(self._direct_beacon())
+            elif self.is_writer and mode in ("watch", "fallback"):
+                # Watch APRS-IS for the beacon gated from the air; the radio never hears its own.
+                token = self.beacon_watch = time.time()
+                asyncio.get_running_loop().call_later(BEACON_WAIT, self._beacon_check, token)
 
     def send_message(self, to, text):
         self.state["msgno"] = self.state.get("msgno", 0) % 999 + 1
@@ -715,6 +730,31 @@ class Daemon:
                 self.say(f"Message to {m['to']} was refused")
 
     # -- the iGate
+    def _direct_beacon(self):
+        return f"{self.call}>{self.conf['tocall']},TCPIP*:{beacon_info(self.conf)}"
+
+    def _own_seen(self, line):
+        """Our own call came back from APRS-IS: an iGate passed the beacon on."""
+        if not self.beacon_watch:
+            return
+        self.beacon_watch = None
+        self.beacon_misses = 0
+        who = igate_of(line)
+        self.say(f"Our beacon reached APRS-IS through {who[1]}." if who else "Our beacon reached APRS-IS.")
+
+    def _beacon_check(self, token):
+        if self.beacon_watch != token:
+            return
+        self.beacon_watch = None
+        self.beacon_misses += 1
+        if self.conf["aprsis_beacon"].lower() == "fallback" and self.is_writer and self._is_send(self._direct_beacon()):
+            self.say(f"No iGate passed our beacon to APRS-IS in {BEACON_WAIT} seconds. Sent it there directly.")
+        else:
+            self.say(f"No iGate passed our beacon to APRS-IS in {BEACON_WAIT} seconds.")
+        if self.beacon_misses == 2:
+            self.say("Two beacons in a row reached no iGate. The radio may not be transmitting; "
+                     "if it restarted by itself, power cycle it.")
+
     def _gate(self, source, dest, digis, info):
         line = igate_line(source, dest, digis, info, self.call)
         if not line:
@@ -770,7 +810,9 @@ class Daemon:
             try:
                 reader, writer = await asyncio.wait_for(asyncio.open_connection(host, int(port)), 30)
                 await asyncio.wait_for(reader.readline(), 30)
-                writer.write(f"user {self.call} pass {passcode} vers d750-aprs {VERSION}\r\n".encode())
+                watch = self.conf["aprsis_beacon"].lower() in ("watch", "fallback")
+                login = f"user {self.call} pass {passcode} vers d750-aprs {VERSION}" + (f" filter b/{self.call}" if watch else "")
+                writer.write((login + "\r\n").encode())
                 await writer.drain()
                 while True:
                     # Servers send a keepalive line every 20 seconds; two minutes of silence is a dead link.
@@ -778,6 +820,10 @@ class Daemon:
                     if not raw:
                         raise ConnectionError("the server closed the connection")
                     text = raw.decode("latin-1").strip()
+                    if text.upper().startswith(self.call + ">"):
+                        self.raw("IS heard " + text)
+                        self._own_seen(text)
+                        continue
                     if not text.startswith("# logresp"):
                         continue
                     if " verified" not in text:
@@ -831,7 +877,12 @@ class Daemon:
                 continue
             self._port_problem = None
             self.serial = s
-            self.say(f"Listening on {self.conf['tnc']}.")
+            if getattr(self, "_port_lost", False):
+                self.say(f"Listening on {self.conf['tnc']} again. If the radio restarted by itself, power cycle it: "
+                         "after one such restart it received but did not transmit until it was switched off and on.")
+                self._port_lost = False
+            else:
+                self.say(f"Listening on {self.conf['tnc']}.")
             lost = asyncio.get_running_loop().create_future()
             loop = asyncio.get_running_loop()
 
@@ -859,7 +910,8 @@ class Daemon:
                 s.close()
             except Exception:
                 pass
-            self.say("Lost the TNC port. Trying again in 10 seconds.")
+            self._port_lost = True
+            self.say("Lost the TNC port; the radio may have restarted or been unplugged. Trying again in 10 seconds.")
             await asyncio.sleep(10)
 
     async def _timers(self):

@@ -152,6 +152,10 @@ mice = "`dGNn\x1cv>/>\"3r}&\r"
 line = aprs.igate_line("N0CALL-7", "T1TS2U", [], mice, "X")
 check("igate keeps Mic-E bytes as heard", line.encode("latin-1"), b"N0CALL-7>T1TS2U,qAR,X:`dGNn\x1cv>/>\"3r}&")
 
+check("which igate, from the q construct", aprs.igate_of("N0CALL-2>APZ750,WIDE1-1,qAR,W7ABC-10:=hello"), ("qAR", "W7ABC-10"))
+check("which igate, after a digi", aprs.igate_of("N0CALL-2>APZ750,W7DEN-3*,WIDE2-1,qAO,K7XYZ:=a:b"), ("qAO", "K7XYZ"))
+check("no q construct", aprs.igate_of("N0CALL-2>APZ750,TCPIP*:=hello"), None)
+
 # The settings file holds the home position: set_conf keeps it owner only and keeps the other lines.
 import tempfile
 with tempfile.TemporaryDirectory() as tmp:
