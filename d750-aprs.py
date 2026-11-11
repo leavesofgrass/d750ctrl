@@ -16,8 +16,13 @@ import json
 import math
 import os
 import re
+import shutil
+import subprocess
 import sys
+import threading
 import time
+import urllib.parse
+import urllib.request
 from datetime import datetime
 
 CONF = os.path.expanduser("~/.config/d750ctrl/aprs.conf")
@@ -26,6 +31,29 @@ LOGDIR = os.path.expanduser("~/.local/share/d750ctrl/log")
 SOCK = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or os.path.expanduser("~/.cache"), "d750-aprs.sock")
 VERSION = "0.2.0"
 BEACON_WAIT = 60          # seconds to watch APRS-IS for our beacon after it goes out on the air
+DIGI_PER_MINUTE = 20      # the digipeater repeats at most this many packets a minute
+DIGI_WORDS = {"off": "Digipeater off", "fillin": "Fill-in digipeater", "wide": "Wide digipeater"}
+# Uptime Kuma push URLs, written by ~/lab/kuma/setup-kuma.py. Each push is skipped while its file is missing.
+PUSH_FILES = {w: f"~/.config/kuma-push-url-aprs-{w}" for w in ("tnc", "igate", "heard", "beacon")}
+HEARTBEAT = 300           # seconds between pushes that say the TNC and the iGate link are up
+
+
+def _quietly(*cmd_or_url):
+    """Run a command or fetch a URL in the background; errors are dropped, nothing waits on it."""
+    def work():
+        try:
+            if cmd_or_url[0].startswith("http"):
+                urllib.request.urlopen(cmd_or_url[0], timeout=10).read()
+            else:
+                subprocess.run(cmd_or_url, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+        except Exception:
+            pass
+    threading.Thread(target=work, daemon=True).start()
+
+
+def push_url(base, msg, up=True):
+    """A Kuma push URL from the one in the file, with this status and message."""
+    return base.split("?", 1)[0] + "?" + urllib.parse.urlencode({"status": "up" if up else "down", "msg": msg, "ping": ""})
 
 DEFAULTS = {
     "call": "N0CALL",
@@ -45,6 +73,13 @@ DEFAULTS = {
     "aprsis_server": "noam.aprs2.net:14580",
     "aprsis_pass": "",
     "aprsis_beacon": "fallback",
+    "digi": "off",
+    "digi_aliases": "",
+    "digi_max_hops": "2",
+    "digi_viscous": "0",
+    "digi_dupe": "30",
+    "notify": "on",
+    "notify_topic": "aprs",
 }
 
 # ---------------------------------------------------------------- settings
@@ -185,6 +220,91 @@ def tnc2(source, dest, digis, info):
     last_rep = max((n for n, (_, rep) in enumerate(digis) if rep), default=-1)
     path = [d + ("*" if n == last_rep else "") for n, (d, _) in enumerate(digis)]
     return f"{source}>{','.join([dest] + path)}:{info}"
+
+
+# ---------------------------------------------------------------- digipeater
+
+MAX_DIGIS = 8   # AX.25 allows eight digipeater addresses
+
+
+def next_hop(digis, mycall, mode, aliases=(), max_hops=2):
+    """The path after this station repeats a packet, as ([(call, used)], kind), or (None, None) to stay quiet.
+
+    The first unused hop decides:
+    - our call, or an alias: it is marked used, an alias replaced by our call. Kind "call".
+    - WIDE1-1 (fill-in and wide): replaced by our call, used. Kind "fillin".
+    - WIDEn-N, n from 2 up to max_hops (wide only): our call goes in front, used, and N drops by one; at 0
+      the WIDEn is used up. With eight hops already, only N drops. Kind "wide".
+    Never: a packet we have repeated already, WIDEn-N asking more than max_hops, or N above n.
+    """
+    me = mycall.upper()
+    if mode not in ("fillin", "wide") or any(d.upper() == me and used for d, used in digis):
+        return None, None
+    i = next((n for n, (_, used) in enumerate(digis) if not used), None)
+    if i is None:
+        return None, None
+    hop = digis[i][0].upper()
+    names = {me} | {a.upper() for a in aliases if a}
+    if hop in names:
+        return digis[:i] + [(mycall, True)] + digis[i + 1:], "call"
+    m = re.fullmatch(r"WIDE([1-7])-([1-7])", hop)
+    if not m:
+        return None, None
+    n, left = int(m.group(1)), int(m.group(2))
+    if left > n or n > max_hops:
+        return None, None
+    if n == 1:
+        return digis[:i] + [(mycall, True)] + digis[i + 1:], "fillin"
+    if mode != "wide":
+        return None, None
+    left -= 1
+    wide = (f"WIDE{n}-{left}" if left else f"WIDE{n}", left == 0)
+    new = digis[:i] + [(mycall, True), wide] + digis[i + 1:]
+    if len(new) > MAX_DIGIS:
+        new = digis[:i] + [wide] + digis[i + 1:]
+    return new, "wide"
+
+
+def frame_key(frame):
+    """The same packet by any path: (source, destination, everything after the addresses), or None."""
+    i = 0
+    while i + 7 <= len(frame):
+        last = frame[i + 6] & 0x01
+        i += 7
+        if last:
+            break
+    else:
+        return None
+    if i < 14:
+        return None
+    return _addr_decode(frame[7:14])[0].upper(), _addr_decode(frame[0:7])[0].upper(), frame[i:]
+
+
+def digi_frame(frame, mycall, mode, aliases=(), max_hops=2):
+    """The whole frame to send when repeating an APRS packet heard, as (frame, kind), or None.
+
+    APRS only: a UI frame with PID F0. Only the digipeater addresses change; the destination, the source
+    and everything after the addresses go out byte for byte as heard.
+    """
+    addrs, i = [], 0
+    while i + 7 <= len(frame):
+        call, hbit, last = _addr_decode(frame[i:i + 7])
+        addrs.append((call, hbit))
+        i += 7
+        if last:
+            break
+    else:
+        return None
+    if len(addrs) < 3 or i + 2 > len(frame) or frame[i] & 0xEF != 0x03 or frame[i + 1] != 0xF0:
+        return None
+    rest = frame[i:]
+    new, kind = next_hop(addrs[2:], mycall, mode, aliases, max_hops)
+    if new is None:
+        return None
+    out = bytearray(frame[:14])
+    for n, (d, used) in enumerate(new):
+        out += _addr_encode(d, last=n == len(new) - 1, repeated=used)
+    return bytes(out) + rest, kind
 
 
 # ---------------------------------------------------------------- APRS-IS
@@ -623,6 +743,14 @@ class Daemon:
         self.gate_seen = {}
         self.beacon_watch = None
         self.beacon_misses = 0
+        self.watch_up = False
+        self.digi = conf["digi"].lower() if conf["digi"].lower() in DIGI_WORDS else "off"
+        self.digi_aliases = [a.strip() for a in conf["digi_aliases"].replace(",", " ").split() if a.strip()]
+        self.repeated = 0
+        self.heard_keys = {}           # packet key -> when first heard, for the duplicate check
+        self.digi_pending = {}         # packet key -> timer, while a fill-in repeat waits (viscous delay)
+        self.digi_times = []
+        self.digi_limit_said = False
 
     # -- state, logs
     def _load_state(self):
@@ -635,6 +763,19 @@ class Daemon:
         os.makedirs(os.path.dirname(STATE), exist_ok=True)
         json.dump(self.state, open(STATE + ".tmp", "w"))
         os.replace(STATE + ".tmp", STATE)
+
+    def push(self, what, msg, up=True):
+        try:
+            base = open(os.path.expanduser(PUSH_FILES[what]), encoding="utf-8").read().strip()
+        except OSError:
+            return
+        _quietly(push_url(base, msg, up))
+
+    def notify(self, topic, title, message, priority=3):
+        """One ntfy message through the notify command, when notify = on and the command is there."""
+        exe = shutil.which("notify") or os.path.expanduser("~/.local/bin/notify")
+        if self.conf["notify"].lower() in ("on", "yes") and os.path.exists(exe):
+            _quietly(exe, topic, title, message, str(priority))
 
     def say(self, line):
         now = datetime.now()
@@ -676,7 +817,7 @@ class Daemon:
             mode = self.conf["aprsis_beacon"].lower()
             if self.is_writer and mode in ("on", "yes"):
                 self._is_send(self._direct_beacon())
-            elif self.is_writer and mode in ("watch", "fallback"):
+            elif self.watch_up and mode in ("watch", "fallback"):
                 # Watch APRS-IS for the beacon gated from the air; the radio never hears its own.
                 token = self.beacon_watch = time.time()
                 asyncio.get_running_loop().call_later(BEACON_WAIT, self._beacon_check, token)
@@ -694,12 +835,16 @@ class Daemon:
 
     # -- receiving
     def on_frame(self, frame, from_client=None):
+        note = self._digi_consider(frame)
         d = ax25_decode(frame)
         if not d:
             return
         source, dest, digis, info = d
         self.raw("RX " + tnc2(source, dest, digis, info))
         self.heard += 1
+        if time.time() - getattr(self, "_heard_pushed", 0) > 60:
+            self._heard_pushed = time.time()
+            self.push("heard", f"heard {source}")
         if self.is_writer:
             self._gate(source, dest, digis, info)
         p = parse(source, dest, info)
@@ -708,7 +853,7 @@ class Daemon:
             return
         line = describe(p, digis, self.home, self.units, self.call)
         if line:
-            self.say(line)
+            self.say(line + (f", {note}" if note else ""))
 
     def _for_us(self, p):
         src = p["source"].upper()
@@ -718,6 +863,7 @@ class Daemon:
             self.seen_msgs[key] = time.time()
             if fresh:
                 self.say(f"Message from {src}: {p['text']}")
+                self.notify(self.conf["notify_topic"], f"APRS from {src}", p["text"], 4)
             if p.get("id"):
                 self._ack(src, p["id"])
         elif p["type"] == "ack":
@@ -728,6 +874,62 @@ class Daemon:
             m = self.outbox.pop(p["id"], None)
             if m:
                 self.say(f"Message to {m['to']} was refused")
+
+    # -- the digipeater
+    def _digi_consider(self, frame):
+        """Decide on repeating a frame just heard; a few words for its line when it is repeated."""
+        key = frame_key(frame)
+        if not key:
+            return None
+        now = time.time()
+        keep = max(5, int(self.conf["digi_dupe"]))
+        self.heard_keys = {k: t for k, t in self.heard_keys.items() if now - t < keep}
+        waiting = self.digi_pending.pop(key, None)
+        if waiting:
+            waiting.cancel()
+            self.raw(f"DIGI skipped {key[0]}: another station repeated it first")
+        seen = key in self.heard_keys
+        self.heard_keys.setdefault(key, now)
+        if self.digi == "off" or seen or key[0] == self.call.upper() or not (self.transmit and self.serial):
+            return None
+        out = digi_frame(frame, self.call, self.digi, self.digi_aliases, int(self.conf["digi_max_hops"]))
+        if not out:
+            return None
+        new, kind = out
+        wait = int(self.conf["digi_viscous"])
+        if kind == "fillin" and wait > 0:
+            self.digi_pending[key] = asyncio.get_running_loop().call_later(wait, self._digi_send, key, new)
+            return f"repeating in {wait} seconds unless another digipeater does"
+        return "repeated" if self._digi_send(None, new) else None
+
+    def _digi_send(self, key, frame):
+        if key is not None:
+            self.digi_pending.pop(key, None)
+        now = time.time()
+        self.digi_times = [t for t in self.digi_times if now - t < 60]
+        if len(self.digi_times) >= DIGI_PER_MINUTE:
+            if not self.digi_limit_said:
+                self.say(f"The digipeater repeated {DIGI_PER_MINUTE} packets in the last minute, its limit. "
+                         "It skips packets until the minute is over.")
+                self.digi_limit_said = True
+            return False
+        self.digi_limit_said = False
+        if not (self.transmit and self.serial):
+            return False
+        self.serial.write(kiss_encode(frame))
+        self.digi_times.append(now)
+        self.repeated += 1
+        d = ax25_decode(frame)
+        self.raw("DIGI " + (tnc2(*d) if d else frame.hex()))
+        for w in list(self.clients):
+            self._client_write(w, kiss_encode(frame))
+        return True
+
+    def _digi_state(self):
+        if self.digi == "off":
+            return "Digipeater off."
+        tail = "" if self.transmit else ", but transmitting is off, so it repeats nothing"
+        return f"{DIGI_WORDS[self.digi]} on{tail}. {self.repeated} repeated."
 
     # -- the iGate
     def _direct_beacon(self):
@@ -741,6 +943,7 @@ class Daemon:
         self.beacon_misses = 0
         who = igate_of(line)
         self.say(f"Our beacon reached APRS-IS through {who[1]}." if who else "Our beacon reached APRS-IS.")
+        self.push("beacon", f"beacon carried by {who[1]}" if who else "beacon on APRS-IS")
 
     def _beacon_check(self, token):
         if self.beacon_watch != token:
@@ -782,6 +985,40 @@ class Daemon:
             self.say(problem)
             self.is_problem = problem
 
+    async def _beacon_watcher(self):
+        """Read-only APRS-IS link that sees our own packets: APRS-IS never sends a client the packets from
+        its own login call, so this logs in as N0CALL, read only, with a filter for our call."""
+        host, _, port = self.conf["aprsis_server"].rpartition(":")
+        wait = 10
+        while True:
+            writer = None
+            try:
+                reader, writer = await asyncio.wait_for(asyncio.open_connection(host, int(port)), 30)
+                writer.write(f"user N0CALL pass -1 vers d750-aprs {VERSION} filter b/{self.call}\r\n".encode())
+                await writer.drain()
+                self.watch_up = True
+                wait = 10
+                while True:
+                    raw = await asyncio.wait_for(reader.readline(), 120)
+                    if not raw:
+                        raise ConnectionError("the server closed the connection")
+                    text = raw.decode("latin-1").strip()
+                    if text.upper().startswith(self.call + ">"):
+                        self.raw("IS heard " + text)
+                        self._own_seen(text)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                pass
+            self.watch_up = False
+            if writer:
+                try:
+                    writer.close()
+                except Exception:
+                    pass
+            await asyncio.sleep(wait)
+            wait = min(wait * 2, 600)
+
     def igate_start(self):
         if self.is_task is None or self.is_task.done():
             self.is_task = asyncio.get_running_loop().create_task(self._aprsis())
@@ -810,9 +1047,7 @@ class Daemon:
             try:
                 reader, writer = await asyncio.wait_for(asyncio.open_connection(host, int(port)), 30)
                 await asyncio.wait_for(reader.readline(), 30)
-                watch = self.conf["aprsis_beacon"].lower() in ("watch", "fallback")
-                login = f"user {self.call} pass {passcode} vers d750-aprs {VERSION}" + (f" filter b/{self.call}" if watch else "")
-                writer.write((login + "\r\n").encode())
+                writer.write(f"user {self.call} pass {passcode} vers d750-aprs {VERSION}\r\n".encode())
                 await writer.drain()
                 while True:
                     # Servers send a keepalive line every 20 seconds; two minutes of silence is a dead link.
@@ -820,10 +1055,6 @@ class Daemon:
                     if not raw:
                         raise ConnectionError("the server closed the connection")
                     text = raw.decode("latin-1").strip()
-                    if text.upper().startswith(self.call + ">"):
-                        self.raw("IS heard " + text)
-                        self._own_seen(text)
-                        continue
                     if not text.startswith("# logresp"):
                         continue
                     if " verified" not in text:
@@ -858,6 +1089,10 @@ class Daemon:
         asyncio.get_running_loop().create_task(self._timers())
         if self.igate:
             self.igate_start()
+        if self.conf["aprsis_beacon"].lower() in ("watch", "fallback"):
+            asyncio.get_running_loop().create_task(self._beacon_watcher())
+        if self.digi != "off":
+            self.say(self._digi_state())
         while True:
             try:
                 s = serial.Serial()
@@ -912,12 +1147,24 @@ class Daemon:
                 pass
             self._port_lost = True
             self.say("Lost the TNC port; the radio may have restarted or been unplugged. Trying again in 10 seconds.")
+            if time.time() - getattr(self, "_lost_told", 0) > 600:
+                self._lost_told = time.time()
+                self.notify("alerts", "TM-D750 dropped off USB",
+                            f"d750-aprs lost the TNC port at {datetime.now():%H:%M}. If the radio restarted by itself, "
+                            "power cycle it: after one such restart it received but did not transmit.", 4)
             await asyncio.sleep(10)
 
     async def _timers(self):
         interval = max(10, int(self.conf["interval"])) * 60
+        beat = 0.0
         while True:
             now = time.time()
+            if now - beat >= HEARTBEAT:
+                beat = now
+                if self.serial:
+                    self.push("tnc", f"TNC connected, {self.heard} heard")
+                if self.is_writer:
+                    self.push("igate", f"server {self.is_server}, {self.gated} gated")
             if self.transmit and self.home and self.serial:
                 # Due by the kept time of the last beacon; 20 seconds after a start to let the TNC settle.
                 if now - self.last_beacon >= interval and now - self.started > 20:
@@ -927,6 +1174,8 @@ class Daemon:
                     if m["tries"] >= 5:
                         self.outbox.pop(msgid)
                         self.say(f"Message to {m['to']} was not acknowledged after 5 tries")
+                        self.notify(self.conf["notify_topic"], f"APRS message to {m['to']} not acknowledged",
+                                    f"After 5 tries: {m['text']}", 3)
                         continue
                     if self.send_frame(message_info(m["to"], m["text"], msgid), why=f"the message to {m['to']}"):
                         m["tries"] += 1
@@ -961,10 +1210,22 @@ class Daemon:
         peer = writer.get_extra_info("peername")
         who = f"{peer[0]}" if peer else "a client"
         self.clients.add(writer)
-        self.say(f"KISS program connected from {who}.")
+        told = False
         k = KissReader()
         try:
-            while data := await reader.read(4096):
+            while True:
+                try:
+                    data = await asyncio.wait_for(reader.read(4096), 3 if not told else None)
+                except asyncio.TimeoutError:
+                    data = None
+                if not told and (data or data is None):
+                    # A port check (Uptime Kuma) connects and leaves at once; only a program that stays or sends is said.
+                    self.say(f"KISS program connected from {who}.")
+                    told = True
+                if data is None:
+                    continue
+                if not data:
+                    break
                 for frame in k.feed(data):
                     d = ax25_decode(frame)
                     if not self.transmit:
@@ -976,7 +1237,8 @@ class Daemon:
                             self.raw("TX from " + who + " " + tnc2(d[0], d[1], d[2], d[3]))
         finally:
             self.clients.discard(writer)
-            self.say(f"KISS program from {who} disconnected.")
+            if told:
+                self.say(f"KISS program from {who} disconnected.")
 
     async def _control(self, reader, writer):
         line = (await reader.readline()).decode("utf-8", "replace").strip()
@@ -988,10 +1250,19 @@ class Daemon:
                      f"{'on' if self.transmit else 'off'}, {self.heard} packet{'' if self.heard == 1 else 's'} heard in {up} minute{'' if up == 1 else 's'} from {self.bytes_in} bytes, "
                      f"{len(self.clients)} KISS programs, {len(self.outbox)} messages waiting. "
                      + (f"iGate on, server {self.is_server}, {self.gated} gated." if self.is_writer else
-                        "iGate on, not connected to APRS-IS." if self.igate else "iGate off."))
+                        "iGate on, not connected to APRS-IS." if self.igate else "iGate off.")
+                     + " " + self._digi_state())
         elif cmd == "beacon":
             self.beacon("by hand")
             reply = "Done."
+        elif cmd == "digi":
+            if rest in DIGI_WORDS:
+                self.digi = rest
+                for h in self.digi_pending.values():
+                    h.cancel()
+                self.digi_pending = {}
+                self.say(self._digi_state())
+            reply = self._digi_state()
         elif cmd == "igate":
             self.igate = rest == "on"
             if self.igate:
@@ -1026,6 +1297,7 @@ USAGE = """d750-aprs: APRS through the TM-D750's TNC in KISS mode.
   d750-aprs beacon             send the home beacon now
   d750-aprs transmit on|off    allow or stop every transmission: beacons, messages, acks, KISS programs
   d750-aprs igate on|off       pass what the radio hears to APRS-IS (receive-only; needs aprsis_pass)
+  d750-aprs digi off|fillin|wide   repeat APRS packets: fillin for WIDE1-1 and our call, wide also WIDEn-N
   d750-aprs send CALL TEXT     send an APRS message, retried until acknowledged
 Settings: ~/.config/d750ctrl/aprs.conf. Logs: ~/.local/share/d750ctrl/log/aprs-DATE.txt."""
 
@@ -1083,6 +1355,9 @@ def main(argv):
     elif cmd == "transmit" and len(argv) == 2 and argv[1] in ("on", "off"):
         set_conf("transmit", argv[1])
         return control(f"transmit {argv[1]}")
+    elif cmd == "digi" and len(argv) == 2 and argv[1] in DIGI_WORDS:
+        set_conf("digi", argv[1])
+        return control(f"digi {argv[1]}")
     elif cmd == "igate" and len(argv) == 2 and argv[1] in ("on", "off"):
         set_conf("igate", "rx" if argv[1] == "on" else "off")
         return control(f"igate {argv[1]}")

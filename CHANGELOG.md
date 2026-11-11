@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- d750-aprs reports to Uptime Kuma through push URLs in ~/.config/kuma-push-url-aprs-*: the TNC and the iGate
+  every 5 minutes, a packet heard, and a beacon an iGate carried. With notify = on, ntfy notices for APRS
+  messages to this station (topic aprs), messages that failed, and the TNC port dropping (alerts). Kuma's
+  quick port checks on 8001 are no longer logged as KISS programs. 5 new checks; 107 in all.
+- d750-aprs is an APRS digipeater when asked: `d750-aprs digi fillin` for WIDE1-1, our call and aliases,
+  `d750-aprs digi wide` also for WIDEn-N up to digi_max_hops, with our call traced into the path. Duplicate
+  check, never its own or twice, at most 20 a minute, an optional viscous delay for fill-in, and only with
+  transmitting on. Off by default. 26 new checks; 102 in all.
 - d750-aprs: APRS through the TM-D750's TNC in KISS mode, as a user service. Every packet as one plain line
   with distance and direction from home and how it was heard; the home beacon on a timer; APRS messages sent
   with retries and acknowledged when received; the TNC shared on KISS TCP port 8001. Nothing transmits until
@@ -14,6 +22,8 @@
   says problems once, and shows the server and the count gated in its status line. 12 new checks.
 - After each beacon, d750-aprs watches APRS-IS for 60 seconds and says which iGate carried it; with
   aprsis_beacon = fallback, the default, it sends the beacon to APRS-IS directly when no iGate did.
+  The watch has its own read-only login, because APRS-IS never sends a client the packets of its own login
+  call; with the filter on the iGate login every beacon looked missed and was sent a second time.
 - d750-aprs says when the TNC port drops and returns that a radio restarted by itself may need a power
   cycle before it transmits again, and says so too after two beacons in a row that reach no iGate.
 - d750-aprs keeps the time of its last beacon, so a restart no longer sends an extra one, and its settings

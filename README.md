@@ -56,6 +56,17 @@ and the computer. Both sockets may be connected at once; the udev rule names the
   aprsis_pass. After each beacon it watches APRS-IS for 60 seconds and says which iGate carried it, and with
   aprsis_beacon = fallback, the default, sends it there directly when none did. The settings file holds the
   position and passcode and stays readable by its owner only.
+  As an APRS digipeater, `d750-aprs digi fillin` repeats packets whose next hop is WIDE1-1, our call or one
+  of digi_aliases; `d750-aprs digi wide` also repeats WIDEn-N up to digi_max_hops (2), putting our call in
+  the path and taking one off N. It repeats only APRS packets, never one it has repeated or heard in the
+  last 30 seconds, never our own, never with transmitting off, and at most 20 a minute. digi_viscous
+  waits that many seconds before a fill-in repeat and drops it if another digipeater repeats it first.
+  A home station is usually a fill-in digipeater; ask the local APRS group before running wide.
+  Watching it: when ~/.config/kuma-push-url-aprs-tnc, -igate, -heard and -beacon exist (Uptime Kuma push
+  URLs), d750-aprs pushes every 5 minutes while it holds the TNC and while the iGate is logged in, when it
+  hears a packet, and when an iGate carries its beacon. With notify = on it posts through the notify
+  command: APRS messages for this station to the notify_topic (aprs), a message that failed after 5 tries,
+  and the TNC port dropping to the alerts topic. A quick port check on 8001 is not logged.
 - probe.py: asks the radio, read only, which commands it answers and writes the table the verbs rely on.
 - d750-sim.py, test-env.sh, tests.sh, d750ctrl-test.py, modes-test.sh: a pretend radio on a pseudo terminal
   and the tests that run against it, so nothing here needs a radio to be proven.

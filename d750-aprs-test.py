@@ -156,6 +156,83 @@ check("which igate, from the q construct", aprs.igate_of("N0CALL-2>APZ750,WIDE1-
 check("which igate, after a digi", aprs.igate_of("N0CALL-2>APZ750,W7DEN-3*,WIDE2-1,qAO,K7XYZ:=a:b"), ("qAO", "K7XYZ"))
 check("no q construct", aprs.igate_of("N0CALL-2>APZ750,TCPIP*:=hello"), None)
 
+# Digipeater: which packets to repeat, and the path they go out with. APRS only.
+me = "N0CALL-2"
+check("fill-in repeats WIDE1-1", aprs.next_hop([("WIDE1-1", False), ("WIDE2-1", False)], me, "fillin"),
+      ([(me, True), ("WIDE2-1", False)], "fillin"))
+check("fill-in leaves WIDE2-1 alone", aprs.next_hop([("W7DEN-3", True), ("WIDE2-1", False)], me, "fillin"), (None, None))
+check("wide repeats WIDE2-1 and uses it up", aprs.next_hop([("W7DEN-3", True), ("WIDE2-1", False)], me, "wide"),
+      ([("W7DEN-3", True), (me, True), ("WIDE2", True)], "wide"))
+check("wide takes one off WIDE2-2", aprs.next_hop([("WIDE2-2", False)], me, "wide"), ([(me, True), ("WIDE2-1", False)], "wide"))
+check("our call in the path", aprs.next_hop([("W7DEN-3", True), (me, False), ("WIDE2-1", False)], me, "fillin"),
+      ([("W7DEN-3", True), (me, True), ("WIDE2-1", False)], "call"))
+check("an alias becomes our call", aprs.next_hop([("CLUB", False)], me, "fillin", aliases=["club"]), ([(me, True)], "call"))
+check("never twice", aprs.next_hop([(me, True), ("WIDE2-1", False)], me, "wide"), (None, None))
+check("too many hops asked", aprs.next_hop([("WIDE3-3", False)], me, "wide", max_hops=2), (None, None))
+check("N above n", aprs.next_hop([("WIDE2-3", False)], me, "wide"), (None, None))
+check("path used up", aprs.next_hop([("W7DEN-3", True)], me, "wide"), (None, None))
+check("off repeats nothing", aprs.next_hop([("WIDE1-1", False)], me, "off"), (None, None))
+full = [(f"DIGI{n}", True) for n in range(7)] + [("WIDE2-2", False)]
+check("eight hops: only N drops", aprs.next_hop(full, me, "wide"), (full[:7] + [("WIDE2-1", False)], "wide"))
+
+heard = aprs.ax25_encode("K7ABC-9", "APRS", ["WIDE1-1", "WIDE2-1"], "!4903.50N/07201.75W-Test")
+out, kind = aprs.digi_frame(heard, me, "fillin")
+src, dst, digis, info = aprs.ax25_decode(out)
+check("repeated frame keeps source and destination", (src, dst, kind), ("K7ABC-9", "APRS", "fillin"))
+check("repeated frame path", digis, [(me, True), ("WIDE2-1", False)])
+check("repeated frame keeps the packet byte for byte", out[-len(info) - 2:], heard[-len(info) - 2:])
+check("same packet, same key, by any path", aprs.frame_key(out), aprs.frame_key(heard))
+i_frame = bytearray(heard); i_frame[28] = 0x00
+check("not APRS: a connected-mode frame is left alone", aprs.digi_frame(bytes(i_frame), me, "wide"), None)
+other_pid = bytearray(heard); other_pid[29] = 0xCF
+check("not APRS: another protocol is left alone", aprs.digi_frame(bytes(other_pid), me, "wide"), None)
+
+# The daemon's part: duplicates, our own packets, transmitting off, the limit. A stand-in serial port.
+import tempfile
+class FakeSerial:
+    def __init__(self): self.sent = []
+    def write(self, b): self.sent.append(b)
+with tempfile.TemporaryDirectory() as tmp:
+    aprs.STATE = os.path.join(tmp, "state.json")
+    d = aprs.Daemon(dict(aprs.DEFAULTS, call=me, transmit="on", digi="fillin"))
+    d.say = d.raw = lambda *a: None
+    d.serial = FakeSerial()
+    check("daemon repeats a WIDE1-1 packet", d._digi_consider(heard), "repeated")
+    check("daemon skips the same packet again", d._digi_consider(heard), None)
+    check("daemon skips a copy by another digi", d._digi_consider(out), None)
+    ours = aprs.ax25_encode(me, "APZ750", ["WIDE1-1"], ">ours")
+    check("daemon never repeats its own", d._digi_consider(ours), None)
+    check("daemon sent exactly one", len(d.serial.sent), 1)
+    d.transmit = False
+    check("daemon repeats nothing with transmitting off", d._digi_consider(aprs.ax25_encode("K7ABC-9", "APRS", ["WIDE1-1"], ">x")), None)
+    d.transmit = True
+    for n in range(aprs.DIGI_PER_MINUTE + 3):
+        d._digi_consider(aprs.ax25_encode("K7ABC-9", "APRS", ["WIDE1-1"], f">n{n}"))
+    check("daemon stops at its limit a minute", len(d.serial.sent), aprs.DIGI_PER_MINUTE)
+    check("status says the digipeater", d._digi_state(), f"Fill-in digipeater on. {aprs.DIGI_PER_MINUTE} repeated.")
+
+# Kuma pushes and ntfy notices: the URL each push makes, and notices only when asked for.
+base = "http://127.0.0.1:3001/api/push/TOKEN?status=up&msg=OK&ping="
+check("push URL, up", aprs.push_url(base, "heard K7ABC-9"), "http://127.0.0.1:3001/api/push/TOKEN?status=up&msg=heard+K7ABC-9&ping=")
+check("push URL, down", aprs.push_url(base, "no TNC", up=False), "http://127.0.0.1:3001/api/push/TOKEN?status=down&msg=no+TNC&ping=")
+calls = []
+real, real_which = aprs._quietly, aprs.shutil.which
+aprs._quietly = lambda *a: calls.append(a)
+aprs.shutil.which = lambda name: sys.executable          # any program that exists stands in for notify
+with tempfile.TemporaryDirectory() as tmp:
+    aprs.STATE = os.path.join(tmp, "state.json")
+    d = aprs.Daemon(dict(aprs.DEFAULTS, call=me, notify="off"))
+    d.notify("aprs", "APRS from K7ABC", "hi", 4)
+    check("no notice with notify off", calls, [])
+    d.conf["notify"] = "on"
+    d.notify("aprs", "APRS from K7ABC", "hi", 4)
+    check("a notice with notify on", [c[1:] for c in calls], [("aprs", "APRS from K7ABC", "hi", "4")])
+    aprs.PUSH_FILES = {"heard": os.path.join(tmp, "missing")}
+    calls.clear()
+    d.push("heard", "x")
+    check("no push while the push file is missing", calls, [])
+aprs._quietly, aprs.shutil.which = real, real_which
+
 # The settings file holds the home position: set_conf keeps it owner only and keeps the other lines.
 import tempfile
 with tempfile.TemporaryDirectory() as tmp:

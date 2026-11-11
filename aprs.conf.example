@@ -37,3 +37,20 @@ aprsis_pass =
 # iGate carried it; fallback does that and sends it to APRS-IS directly when none did; on always sends it
 # directly; off does neither. The radio never hears its own beacon, so this iGate cannot carry it.
 aprsis_beacon = fallback
+
+# APRS digipeater: off; fillin repeats WIDE1-1, our call and the aliases; wide also repeats WIDEn-N up
+# to digi_max_hops. It needs transmit = on. Change it with: d750-aprs digi fillin
+digi = off
+# Other names this station answers to as a digipeater, space separated.
+digi_aliases =
+# The most hops a WIDEn-N may ask for; WIDE3-3 and above are not repeated with 2.
+digi_max_hops = 2
+# Seconds a fill-in repeat waits, dropped if another digipeater repeats it first; 0 repeats at once.
+digi_viscous = 0
+# Seconds within which a packet heard again is a duplicate and not repeated.
+digi_dupe = 30
+
+# ntfy notices through the notify command: APRS messages for this station go to notify_topic, the TNC
+# port dropping goes to alerts. off sends none.
+notify = on
+notify_topic = aprs
