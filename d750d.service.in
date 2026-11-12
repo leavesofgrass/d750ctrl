@@ -1,6 +1,5 @@
 [Unit]
 Description=d750d: owner of the Kenwood TM-D750 serial port (PTT on 4532, commands on 4533)
-After=default.target
 Before=xara.service
 
 [Service]
