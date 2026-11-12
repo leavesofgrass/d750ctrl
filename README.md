@@ -133,6 +133,10 @@ VX and more; d750 probe lists what your firmware answers. Three rules learned th
   command to seconds.
 - Never run the TNC with the data band's squelch wide open while menu 508 is on Busy: the TNC will not transmit.
 - Keep transmitting handhelds away from the USB leads; a bus reset takes the radio and everything else on it.
+- After the radio restarts by itself, its TNC may take commands but send nothing until the KISS settings are
+  set again (TX delay, persistence, slot time). On November 11, 2026 a power cycle did not clear that;
+  sending those settings did. d750-aprs sends them every time it connects to the TNC, and resets the TNC
+  (TN 0,1 then TN 2,1, with the settings again) before it ever power cycles the radio.
 - If the radio restarts by itself, power cycle it. On November 11, 2026 it restarted while receiving a long
   frame and came back receiving but not transmitting, with nothing on its display to say so, until it was
   switched off and on. d750-aprs says so when its TNC port drops and returns, and after two beacons in a

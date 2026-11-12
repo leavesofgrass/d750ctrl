@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- KISS settings (TX delay 300 ms, persistence 255, slot time 100 ms, half duplex) sent to the TNC on every connect,
+  and a TNC reset before any power cycle: after a brownout restart the TNC took commands but sent nothing until
+  they were set again, which a power cycle had not fixed. 3 new checks; 133 in all.
 - A status message: status in aprs.conf every 6 hours, on the air and to APRS-IS; `d750-aprs announce` sends
   it now. It replaced a test status that had stayed on aprs.fi. 5 new checks; 130 in all.
 - Unattended recovery: after the TNC port returns, a check beacon watched on APRS-IS; when the radio is not

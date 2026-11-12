@@ -67,3 +67,9 @@ power_cycle_cmd =
 # For example: Fill-in digipeater and RX iGate
 status =
 status_interval = 360
+
+# KISS settings, sent to the TNC every time d750-aprs connects: TX delay and slot time in 10 ms units,
+# persistence 0 to 255. A brownout restart once left the TNC sending nothing until these were set again.
+kiss_txdelay = 30
+kiss_persist = 255
+kiss_slottime = 10

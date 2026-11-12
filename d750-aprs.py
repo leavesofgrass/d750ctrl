@@ -89,6 +89,9 @@ DEFAULTS = {
     "power_cycle_cmd": "",
     "status": "",
     "status_interval": "360",
+    "kiss_txdelay": "30",
+    "kiss_persist": "255",
+    "kiss_slottime": "10",
 }
 
 # ---------------------------------------------------------------- settings
@@ -127,6 +130,16 @@ def set_conf(key, value, path=CONF):
 # ---------------------------------------------------------------- KISS framing
 
 FEND, FESC, TFEND, TFESC = 0xC0, 0xDB, 0xDC, 0xDD
+
+
+def kiss_params(conf):
+    """KISS settings for the TNC: TX delay (10 ms units), persistence, slot time (10 ms units), half duplex.
+    Sent on every connect: after a brownout restart on November 11, 2026 the TM-D750's TNC took commands
+    but sent no frames until these were set again; a power cycle did not clear it."""
+    out = b""
+    for cmd, key in ((1, "kiss_txdelay"), (2, "kiss_persist"), (3, "kiss_slottime")):
+        out += bytes([0xC0, cmd, max(0, min(255, int(conf.get(key) or DEFAULTS[key]))), 0xC0])
+    return out + bytes([0xC0, 5, 0, 0xC0])
 
 
 def kiss_encode(data, port=0):
@@ -777,6 +790,7 @@ class Daemon:
         self.beacon_misses = 0
         self.watch_up = False
         self.recovery = None           # why we are checking that the radio still sends, while a check runs
+        self.tnc_reset_tried = False   # one TNC reset is tried before any power cycle
         self.last_cycle = float(self.state.get("last_power_cycle", 0.0))
         self.digi = conf["digi"].lower() if conf["digi"].lower() in DIGI_WORDS else "off"
         self.digi_aliases = [a.strip() for a in conf["digi_aliases"].replace(",", " ").split() if a.strip()]
@@ -1013,6 +1027,7 @@ class Daemon:
 
     # -- after a restart: check that the radio still sends, and power cycle it when it does not
     def _restart_seen(self):
+        self.tnc_reset_tried = False
         if self.conf["restart_check"].lower() in ("on", "yes"):
             asyncio.get_running_loop().call_later(CHECK_AFTER, self._check_sending, "the radio came back on USB")
 
@@ -1026,6 +1041,28 @@ class Daemon:
         self.say(f"Checking that the radio still sends, after {reason}: one beacon.")
         self.beacon("check")
 
+    def _cat(self, line):
+        """One Kenwood command through d750d's command port; its answer, or "" when d750d does not answer."""
+        try:
+            with socket.create_connection(("127.0.0.1", 4533), 3) as c:
+                c.sendall((line + "\n").encode())
+                return c.makefile().readline().strip()
+        except OSError:
+            return ""
+
+    def _later(self, delay, fn, *args):
+        asyncio.get_running_loop().call_later(delay, fn, *args)
+
+    def _reset_tnc(self):
+        """Out of KISS and back in by CAT, then the KISS settings again: what brought sending back."""
+        off, on = self._cat("TN 0,1"), self._cat("TN 2,1")
+        if self.serial:
+            try:
+                self.serial.write(kiss_params(self.conf))
+            except Exception:
+                pass
+        return off.startswith("TN") and on.startswith("TN 2")
+
     def _keyed(self):
         try:
             with socket.create_connection(("127.0.0.1", 4533), 3) as c:
@@ -1035,8 +1072,15 @@ class Daemon:
             return False
 
     def _not_sending(self, reason):
-        """The radio sent nothing an iGate heard: power cycle it once, or ask Jon to."""
+        """The radio sent nothing an iGate heard: reset the TNC once, then power cycle it once, or ask Jon to."""
         self.recovery = None
+        if not self.tnc_reset_tried:
+            self.tnc_reset_tried = True
+            ok = self._reset_tnc()
+            self.say(f"The radio is not sending, after {reason}. TNC reset and KISS settings sent again"
+                     f"{'' if ok else ', but d750d did not confirm it'}; checking again in a minute.")
+            self._later(60, self._check_sending, "the TNC reset")
+            return
         cmd, now = self.conf["power_cycle_cmd"].strip(), time.time()
         when = f"{datetime.now():%H:%M}"
         if cmd and now - self.last_cycle > CYCLE_GAP and not self._keyed():
@@ -1070,6 +1114,7 @@ class Daemon:
         self.say(f"Our beacon reached APRS-IS through {who[1]}." if who else "Our beacon reached APRS-IS.")
         self.push("beacon", f"beacon carried by {who[1]}" if who else "beacon on APRS-IS")
         if self.recovery:
+            self.tnc_reset_tried = False
             self.say(f"Sending works after {self.recovery}.")
             if time.time() - self.last_cycle < 900:
                 self.notify("alerts", "TM-D750 sending again",
@@ -1249,6 +1294,12 @@ class Daemon:
                 await asyncio.sleep(30)
                 continue
             self._port_problem = None
+            try:
+                s.write(kiss_params(self.conf))
+                self.raw(f"KISS settings sent: TX delay {int(self.conf['kiss_txdelay']) * 10} ms, persistence "
+                         f"{self.conf['kiss_persist']}, slot time {int(self.conf['kiss_slottime']) * 10} ms, half duplex")
+            except Exception:
+                pass
             self.serial = s
             if getattr(self, "_port_lost", False):
                 self.say(f"Listening on {self.conf['tnc']} again. If the radio restarted by itself it may not "

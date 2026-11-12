@@ -269,6 +269,10 @@ with tempfile.TemporaryDirectory() as tmp:
     d._for_us(aprs.parse("W7XYZ", "APRS", f":{me:<9}:how are you{{7"))
     check("a repeat of the same message is not a new one", len([x for x in open(aprs.MESSAGES)]), 4)
 
+# The KISS settings sent on every connect: TX delay 300 ms, persistence 255, slot time 100 ms, half duplex.
+check("KISS settings", aprs.kiss_params(aprs.DEFAULTS), bytes([0xC0, 1, 30, 0xC0, 0xC0, 2, 255, 0xC0, 0xC0, 3, 10, 0xC0, 0xC0, 5, 0, 0xC0]))
+check("KISS settings kept in range", aprs.kiss_params(dict(aprs.DEFAULTS, kiss_txdelay="999"))[2], 255)
+
 # After a restart: power cycle once when the radio does not send, never twice in 30 minutes, never while
 # keyed, and ask Jon when it cannot. A stand-in runs instead of the command; nothing is switched.
 ran, told = [], []
@@ -280,6 +284,11 @@ with tempfile.TemporaryDirectory() as tmp:
     d.say = d.raw = d.push = lambda *a, **k: None
     d.notify = lambda topic, title, msg, prio=3: told.append((topic, title, prio))
     d._keyed = lambda: False
+    later, resets = [], []
+    d._later = lambda delay, fn, *a: later.append((delay, a))
+    d._reset_tnc = lambda: resets.append(1) or True
+    d._not_sending("a test")
+    check("first a TNC reset and a check again, nothing else", (resets, later, ran, told), ([1], [(60, ("the TNC reset",))], [], []))
     d._not_sending("a test")
     check("no command set: ask Jon, priority 5", (ran, told[-1]), ([], ("alerts", "TM-D750 is not transmitting", 5)))
     d.conf["power_cycle_cmd"] = "d750-power cycle 10"
