@@ -73,6 +73,8 @@ and the computer. Both sockets may be connected at once; the udev rule names the
   checks again when the radio is back; with no command set it asks on alerts at priority 5. `d750-power status`,
   `cycle 10`, `on` and `id` drive relay/d750-relay/d750-relay.ino on the LattePanda's Leonardo: a relay whose
   normally closed contact carries the radio's 13.8 V, so a failure anywhere leaves the radio powered.
+- The status message: status in aprs.conf goes out every 6 hours (status_interval, minutes), on the air and
+  straight to APRS-IS, so aprs.fi shows what the station is. `d750-aprs announce` sends it now.
 - aprschat: APRS messages from the terminal, over SSH or at the console, through d750-aprs. The screen works
   like xarachat's: the top line says who you are talking with, the conversation is in the middle, and you type
   on the bottom line, where the cursor stays. Enter sends; F2 talks to another station, F3 lists the

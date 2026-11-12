@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- A status message: status in aprs.conf every 6 hours, on the air and to APRS-IS; `d750-aprs announce` sends
+  it now. It replaced a test status that had stayed on aprs.fi. 5 new checks; 130 in all.
 - Unattended recovery: after the TNC port returns, a check beacon watched on APRS-IS; when the radio is not
   sending, power_cycle_cmd once in 30 minutes, never while keyed, with ntfy alerts at each step. d750-power and
   relay/d750-relay.ino: a fail-safe relay on the Leonardo, normally closed, never off for more than 60 s.

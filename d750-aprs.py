@@ -87,6 +87,8 @@ DEFAULTS = {
     "notify_topic": "aprs",
     "restart_check": "on",
     "power_cycle_cmd": "",
+    "status": "",
+    "status_interval": "360",
 }
 
 # ---------------------------------------------------------------- settings
@@ -861,6 +863,21 @@ class Daemon:
         with open(MESSAGES, "a", encoding="utf-8") as f:
             f.write(json.dumps(event, ensure_ascii=False) + "\n")
 
+    def announce(self, why="timer"):
+        """The station's status message, on the air and straight to APRS-IS, so aprs.fi always shows it."""
+        text = "".join(ch for ch in self.conf["status"] if ch.isprintable()).strip()[:62]
+        if not text:
+            return False
+        info = ">" + text
+        sent = self.send_frame(info, why="the status message")
+        if self.is_writer:
+            sent = self._is_send(f"{self.call}>{self.conf['tocall']},TCPIP*:{info}") or sent
+        if sent:
+            self.state["last_status"] = time.time()
+            self._save_state()
+            self.say(f"Status sent: {text}")
+        return sent
+
     def send_message(self, to, text):
         """Queue a message, in parts when it is long; the message numbers, one per part."""
         ids = []
@@ -1291,6 +1308,9 @@ class Daemon:
                 # Due by the kept time of the last beacon; 20 seconds after a start to let the TNC settle.
                 if now - self.last_beacon >= interval and now - self.started > 20:
                     self.beacon()
+                every = max(30, int(self.conf["status_interval"] or 360)) * 60
+                if self.conf["status"].strip() and now - self.state.get("last_status", 0) >= every and now - self.started > 40:
+                    self.announce()
             for msgid, m in list(self.outbox.items()):
                 if self.transmit and now >= m["next"]:
                     if m["tries"] >= 5:
@@ -1379,6 +1399,8 @@ class Daemon:
         elif cmd == "beacon":
             self.beacon("by hand")
             reply = "Done."
+        elif cmd == "announce":
+            reply = "Status sent." if self.announce("by hand") else "No status sent: set status in aprs.conf, and transmit or the iGate must be on."
         elif cmd == "digi":
             if rest in DIGI_WORDS:
                 self.digi = rest
@@ -1420,6 +1442,7 @@ USAGE = """d750-aprs: APRS through the TM-D750's TNC in KISS mode.
   d750-aprs last [N] [TEXT]    the last N lines of today's log (20), only those with TEXT
   d750-aprs status             the daemon's state
   d750-aprs beacon             send the home beacon now
+  d750-aprs announce           send the status message (status in aprs.conf) now; it also goes every 6 hours
   d750-aprs transmit on|off    allow or stop every transmission: beacons, messages, acks, KISS programs
   d750-aprs igate on|off       pass what the radio hears to APRS-IS (receive-only; needs aprsis_pass)
   d750-aprs digi off|fillin|wide   repeat APRS packets: fillin for WIDE1-1 and our call, wide also WIDEn-N
@@ -1486,7 +1509,7 @@ def main(argv):
     elif cmd == "igate" and len(argv) == 2 and argv[1] in ("on", "off"):
         set_conf("igate", "rx" if argv[1] == "on" else "off")
         return control(f"igate {argv[1]}")
-    elif cmd in ("status", "beacon"):
+    elif cmd in ("status", "beacon", "announce"):
         return control(cmd)
     elif cmd == "send" and len(argv) >= 3:
         return control("send " + argv[1] + " " + " ".join(argv[2:]))

@@ -301,6 +301,24 @@ with tempfile.TemporaryDirectory() as tmp:
     check("sending again after the cycle, priority 3", (d.recovery, told[-1]), (None, ("alerts", "TM-D750 sending again", 3)))
 aprs._quietly = real
 
+# The status message: on the air and straight to APRS-IS, so aprs.fi shows it; nothing when none is set.
+with tempfile.TemporaryDirectory() as tmp:
+    aprs.STATE = os.path.join(tmp, "state.json")
+    d = aprs.Daemon(dict(aprs.DEFAULTS, call=me, transmit="on", status="Fill-in digipeater and RX iGate"))
+    d.say = d.raw = lambda *a: None
+    air = []
+    d.send_frame = lambda info, path=None, why="": air.append(info) or True
+    class W:
+        def __init__(self): self.lines = []
+        def write(self, b): self.lines.append(b.decode().strip())
+    d.is_writer = W()
+    check("status goes out", d.announce(), True)
+    check("status on the air", air, [">Fill-in digipeater and RX iGate"])
+    check("status to APRS-IS", d.is_writer.lines, [f"{me}>APZ750,TCPIP*:>Fill-in digipeater and RX iGate"])
+    check("status time kept", json.load(open(aprs.STATE)).get("last_status", 0) > 0, True)
+    d.conf["status"] = ""
+    check("no status set, nothing sent", d.announce(), False)
+
 # The settings file holds the home position: set_conf keeps it owner only and keeps the other lines.
 import tempfile
 with tempfile.TemporaryDirectory() as tmp:

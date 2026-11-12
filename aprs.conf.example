@@ -62,3 +62,8 @@ restart_check = on
 # For example: d750-power cycle 10   (the relay on the Leonardo, relay/d750-relay)
 # or a Home Assistant webhook that switches the supply off and on: curl -fsS -m 10 -X POST http://HA:8123/api/webhook/ID
 power_cycle_cmd =
+
+# The station's status message, every status_interval minutes, on the air and to APRS-IS. Empty sends none.
+# For example: Fill-in digipeater and RX iGate
+status =
+status_interval = 360
