@@ -67,6 +67,10 @@ and the computer. Both sockets may be connected at once; the udev rule names the
   hears a packet, and when an iGate carries its beacon. With notify = on it posts through the notify
   command: APRS messages for this station to the notify_topic (aprs), a message that failed after 5 tries,
   and the TNC port dropping to the alerts topic. A quick port check on 8001 is not logged.
+- The radio switched off, at night for one, is a normal state: both its USB devices are gone. d750-aprs then
+  keeps its Kuma monitors (TNC, heard, beacon) up with "radio off since HH:MM" instead of letting them go
+  down, and sends no alert. Only a return within 3 minutes counts as a restart, with the ntfy alert "TM-D750
+  restarted by itself". After any return, switched on or restarted, it sends a check beacon.
 - Recovering without anyone there: when the TNC port drops and returns, d750-aprs sends a check beacon 2 minutes
   later and watches APRS-IS for it. If no iGate carries it, or two scheduled beacons in a row reach none, it runs
   power_cycle_cmd once (never twice in 30 minutes, never while xara is keyed), says so on ntfy alerts, and

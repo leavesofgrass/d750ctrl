@@ -328,6 +328,21 @@ with tempfile.TemporaryDirectory() as tmp:
     d.conf["status"] = ""
     check("no status set, nothing sent", d.announce(), False)
 
+# The radio switched off: no TNC port and nothing on USB is a normal state, not a fault.
+with tempfile.TemporaryDirectory() as tmp:
+    aprs.STATE = os.path.join(tmp, "state.json")
+    d = aprs.Daemon(dict(aprs.DEFAULTS, call=me))
+    real_usb = aprs.radio_on_usb
+    aprs.radio_on_usb = lambda vendor="2166": False
+    check("radio off when it is gone from USB", (d.radio_off(), d.radio_off_since is not None), (True, True))
+    aprs.radio_on_usb = lambda vendor="2166": True
+    check("not off while it shows on USB", d.radio_off(), False)
+    d.serial = object()
+    aprs.radio_on_usb = lambda vendor="2166": False
+    check("not off while the TNC port is open", d.radio_off(), False)
+    aprs.radio_on_usb = real_usb
+check("a restart is a quick return", aprs.RESTART_GAP, 180)
+
 # The settings file holds the home position: set_conf keeps it owner only and keeps the other lines.
 import tempfile
 with tempfile.TemporaryDirectory() as tmp:

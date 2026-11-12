@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The radio switched off is no longer an alarm: with the radio gone from USB, d750-aprs reports its Kuma
+  monitors up as "radio off", and the USB alert goes out only when the radio comes back within 3 minutes, a
+  restart. The check beacon still follows every return. 4 new checks; 137 in all.
 - KISS settings (TX delay 300 ms, persistence 255, slot time 100 ms, half duplex) sent to the TNC on every connect,
   and a TNC reset before any power cycle: after a brownout restart the TNC took commands but sent nothing until
   they were set again, which a power cycle had not fixed. 3 new checks; 133 in all.

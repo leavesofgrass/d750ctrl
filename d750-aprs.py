@@ -41,6 +41,20 @@ PUSH_FILES = {w: f"~/.config/kuma-push-url-aprs-{w}" for w in ("tnc", "igate", "
 HEARTBEAT = 300           # seconds between pushes that say the TNC and the iGate link are up
 CHECK_AFTER = 120         # seconds after the radio comes back before the check beacon
 CYCLE_GAP = 1800          # at most one automatic power cycle in this many seconds
+RESTART_GAP = 180         # the TNC port back within this many seconds: the radio restarted, not switched off
+
+
+def radio_on_usb(vendor="2166"):
+    """Whether the TM-D750 shows on USB at all. Switched off, both its USB devices are gone; that is the
+    radio off, a normal state at night, not a fault."""
+    import glob
+    for f in glob.glob("/sys/bus/usb/devices/*/idVendor"):
+        try:
+            if open(f).read().strip() == vendor:
+                return True
+        except OSError:
+            pass
+    return False
 
 
 def _quietly(*cmd_or_url):
@@ -790,6 +804,8 @@ class Daemon:
         self.beacon_misses = 0
         self.watch_up = False
         self.recovery = None           # why we are checking that the radio still sends, while a check runs
+        self.radio_off_since = None    # when the radio was last seen gone from USB: switched off
+        self.port_lost_at = None
         self.tnc_reset_tried = False   # one TNC reset is tried before any power cycle
         self.last_cycle = float(self.state.get("last_power_cycle", 0.0))
         self.digi = conf["digi"].lower() if conf["digi"].lower() in DIGI_WORDS else "off"
@@ -1026,6 +1042,16 @@ class Daemon:
         return f"{DIGI_WORDS[self.digi]} on{tail}. {self.repeated} repeated."
 
     # -- after a restart: check that the radio still sends, and power cycle it when it does not
+    def _port_lost_flag(self):
+        return getattr(self, "_port_lost", False)
+
+    def radio_off(self):
+        """True while the radio is switched off: no TNC port and nothing from it on USB."""
+        if self.serial or radio_on_usb():
+            return False
+        self.radio_off_since = self.radio_off_since or time.time()
+        return True
+
     def _restart_seen(self):
         self.tnc_reset_tried = False
         if self.conf["restart_check"].lower() in ("on", "yes"):
@@ -1286,8 +1312,14 @@ class Daemon:
                 s.dtr, s.rts = up, up
                 s.open()
             except Exception as e:
-                why = "is not there yet" if isinstance(e, FileNotFoundError) or "No such file" in str(e) else (
+                missing = isinstance(e, FileNotFoundError) or "No such file" in str(e)
+                why = "is not there yet" if missing else (
                     "is not yours to open; run ~/fixes/d750-tnc-udev-root.sh" if "denied" in str(e) else f"cannot be opened: {e}")
+                if missing and not self._port_lost_flag():
+                    self._port_lost, self.port_lost_at = True, time.time()   # its return gets the check beacon
+                if missing and not radio_on_usb():
+                    self.radio_off_since = self.radio_off_since or time.time()
+                    why = "is not there: the radio is off"
                 if why != getattr(self, "_port_problem", None):
                     self.say(f"The TNC port {self.conf['tnc']} {why}. Waiting for it.")
                     self._port_problem = why
@@ -1301,10 +1333,19 @@ class Daemon:
             except Exception:
                 pass
             self.serial = s
-            if getattr(self, "_port_lost", False):
-                self.say(f"Listening on {self.conf['tnc']} again. If the radio restarted by itself it may not "
-                         f"transmit; a check beacon follows in {CHECK_AFTER // 60} minutes.")
-                self._port_lost = False
+            if self._port_lost_flag():
+                gap = time.time() - (self.port_lost_at or time.time())
+                if gap < RESTART_GAP:
+                    # Back within minutes: the radio restarted by itself, a brownout most likely.
+                    self.say(f"Listening on {self.conf['tnc']} again after {int(gap)} seconds: the radio restarted. "
+                             f"A check beacon follows in {CHECK_AFTER // 60} minutes.")
+                    self.notify("alerts", "TM-D750 restarted by itself",
+                                f"The radio dropped off USB and came back at {datetime.now():%H:%M}. d750-aprs checks "
+                                "that it still transmits and resets the TNC if not.", 4)
+                else:
+                    self.say(f"The radio is back after {gap / 60:.0f} minutes off. Listening on {self.conf['tnc']}; "
+                             f"a check beacon follows in {CHECK_AFTER // 60} minutes.")
+                self._port_lost, self.radio_off_since = False, None
                 self._restart_seen()
             else:
                 self.say(f"Listening on {self.conf['tnc']}.")
@@ -1335,13 +1376,10 @@ class Daemon:
                 s.close()
             except Exception:
                 pass
-            self._port_lost = True
-            self.say("Lost the TNC port; the radio may have restarted or been unplugged. Trying again in 10 seconds.")
-            if time.time() - getattr(self, "_lost_told", 0) > 600:
-                self._lost_told = time.time()
-                self.notify("alerts", "TM-D750 dropped off USB",
-                            f"d750-aprs lost the TNC port at {datetime.now():%H:%M}. If the radio restarted by itself, "
-                            "power cycle it: after one such restart it received but did not transmit.", 4)
+            self._port_lost, self.port_lost_at = True, time.time()
+            # No alert here: switching the radio off looks the same. Its return within minutes means a restart,
+            # and that is when the alert goes out.
+            self.say("Lost the TNC port: the radio was switched off, or restarted. Trying again in 10 seconds.")
             await asyncio.sleep(10)
 
     async def _timers(self):
@@ -1353,6 +1391,11 @@ class Daemon:
                 beat = now
                 if self.serial:
                     self.push("tnc", f"TNC connected, {self.heard} heard")
+                elif self.radio_off():
+                    # Switched off, at night say: the radio's monitors stay up and say so, instead of alarming.
+                    off = f"radio off since {datetime.fromtimestamp(self.radio_off_since):%H:%M}"
+                    for what in ("tnc", "heard", "beacon"):
+                        self.push(what, off)
                 if self.is_writer:
                     self.push("igate", f"server {self.is_server}, {self.gated} gated")
             if self.transmit and self.home and self.serial:
