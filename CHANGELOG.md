@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Restart notices say only what is known. The "not transmitting" alert went out after nearly every restart,
+  true or not, because an iGate here carries the beacon only now and then. Now each restart gives one
+  notice with the day's count and the time since the last one, kept in aprs.json; two drops within 2
+  minutes are one restart. The TNC reset runs after every return, before the check beacon, and once more a
+  minute later if the radio does not confirm it. The first packet heard after a restart is said, and so is
+  nothing heard for deaf_minutes (90). A beacon an iGate carries after a restart is good news on ntfy; none
+  carrying it is a log line, never an alarm, a reset or a power cycle. The "not transmitting", "power
+  cycled by the station computer" and "sending again" notices are gone; nothing runs power_cycle_cmd until a real
+  transmit check exists. 53 new checks, 8 old ones replaced; 182 in all.
 - The radio switched off is no longer an alarm: with the radio gone from USB, d750-aprs reports its Kuma
   monitors up as "radio off", and the USB alert goes out only when the radio comes back within 3 minutes, a
   restart. The check beacon still follows every return. 4 new checks; 137 in all.

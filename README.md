@@ -66,17 +66,31 @@ and the computer. Both sockets may be connected at once; the udev rule names the
   URLs), d750-aprs pushes every 5 minutes while it holds the TNC and while the iGate is logged in, when it
   hears a packet, and when an iGate carries its beacon. With notify = on it posts through the notify
   command: APRS messages for this station to the notify_topic (aprs), a message that failed after 5 tries,
-  and the TNC port dropping to the alerts topic. A quick port check on 8001 is not logged.
+  and the restart notices below to the alerts topic. A quick port check on 8001 is not logged.
 - The radio switched off, at night for one, is a normal state: both its USB devices are gone. d750-aprs then
   keeps its Kuma monitors (TNC, heard, beacon) up with "radio off since HH:MM" instead of letting them go
-  down, and sends no alert. Only a return within 3 minutes counts as a restart, with the ntfy alert "TM-D750
-  restarted by itself". After any return, switched on or restarted, it sends a check beacon.
-- Recovering without anyone there: when the TNC port drops and returns, d750-aprs sends a check beacon 2 minutes
-  later and watches APRS-IS for it. If no iGate carries it, or two scheduled beacons in a row reach none, it runs
-  power_cycle_cmd once (never twice in 30 minutes, never while xara is keyed), says so on ntfy alerts, and
-  checks again when the radio is back; with no command set it asks on alerts at priority 5. `d750-power status`,
-  `cycle 10`, `on` and `id` drive relay/d750-relay/d750-relay.ino on the LattePanda's Leonardo: a relay whose
-  normally closed contact carries the radio's 13.8 V, so a failure anywhere leaves the radio powered.
+  down, and sends no alert. Only a return within 3 minutes counts as a restart.
+- After a restart, d750-aprs says only what it knows. It has no sure sign that the radio transmits, so it
+  claims nothing about that. On ntfy alerts:
+  - "TM-D750 restarted, 11:39", priority 3: "Restart 6 today. 3 h 4 min after the last one. TNC reset
+    follows." The day's count and the last restart's time are kept in aprs.json. Two drops within 2
+    minutes are one restart and one notice.
+  - "TM-D750 hearing again, 11:52", priority 2, for the first packet the TNC hears: "First packet 13 min
+    after the 11:39 restart."
+  - "TM-D750 has heard nothing since 11:39", priority 4, when nothing is heard for deaf_minutes (90; 0 turns
+    it off): "90 min since it restarted. Check the radio." Once a restart; not with the radio switched off.
+  - "TM-D750 beacon carried by NAME, 11:42", priority 2, the first time an iGate carries the beacon after a
+    restart.
+- After every return, switched on or restarted, d750-aprs resets the TNC 2 minutes later (TN 0,1, TN 2,1
+  and the KISS settings) without waiting for any test. d750d reopens its port up to about 45 seconds after
+  the radio is back, so if the radio does not confirm the reset it tries once more a minute later, and says
+  in the log whether it was confirmed. Then, with restart_check = on, one check beacon. An iGate carrying
+  it is good news; none carrying it is usual at this station and is one line in the log, never an alarm, a
+  reset or a power cycle.
+- power_cycle_cmd is kept for a real transmit check that does not exist yet; nothing runs it now.
+  `d750-power status`, `cycle 10`, `on` and `id` drive relay/d750-relay/d750-relay.ino on the LattePanda's
+  Leonardo: a relay whose normally closed contact carries the radio's 13.8 V, so a failure anywhere leaves
+  the radio powered.
 - The status message: status in aprs.conf goes out every 6 hours (status_interval, minutes), on the air and
   straight to APRS-IS, so aprs.fi shows what the station is. `d750-aprs announce` sends it now.
 - aprschat: APRS messages from the terminal, over SSH or at the console, through d750-aprs. The screen works
@@ -140,11 +154,12 @@ VX and more; d750 probe lists what your firmware answers. Three rules learned th
 - After the radio restarts by itself, its TNC may take commands but send nothing until the KISS settings are
   set again (TX delay, persistence, slot time). On November 11, 2026 a power cycle did not clear that;
   sending those settings did. d750-aprs sends them every time it connects to the TNC, and resets the TNC
-  (TN 0,1 then TN 2,1, with the settings again) before it ever power cycles the radio.
-- If the radio restarts by itself, power cycle it. On November 11, 2026 it restarted while receiving a long
-  frame and came back receiving but not transmitting, with nothing on its display to say so, until it was
-  switched off and on. d750-aprs says so when its TNC port drops and returns, and after two beacons in a
-  row that reach no iGate.
+  (TN 0,1 then TN 2,1, with the settings again) after every return of its port.
+- On November 11, 2026 the radio restarted while receiving a long frame and came back receiving but not
+  transmitting, with nothing on its display to say so, until it was switched off and on. d750-aprs cannot
+  tell that from here: an iGate carries this station's beacon only now and then, so a beacon nobody carried
+  proves nothing. It says when the radio restarts and whether it hears again, and leaves transmitting to
+  a real check.
 - BC's second field is not the PTT band: it read 1 while the PTT stayed on band A, and it changed to 1
   the moment the TNC transmitted on band B. d750d still takes it as the transmit band.
 
@@ -180,7 +195,8 @@ TX and RX commands and offers hamlib's protocol on its own port instead.
     python3 d750ctrl-test.py        the screen under a pseudo terminal, 18 checks
     ./modes-test.sh                 RTTY and SSTV round trips over a virtual sink
     .venv/bin/python rttymodem.py selftest
-    python3 -I d750-aprs-test.py    KISS, AX.25, APRS positions, Mic-E, messages and the plain lines, 52 checks
+    python3 -I d750-aprs-test.py    KISS, AX.25, APRS positions, Mic-E, messages, the plain lines and the
+                                    restart notices, 182 checks
 
 ## License
 

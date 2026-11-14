@@ -50,15 +50,19 @@ digi_viscous = 0
 # Seconds within which a packet heard again is a duplicate and not repeated.
 digi_dupe = 30
 
-# ntfy notices through the notify command: APRS messages for this station go to notify_topic, the TNC
-# port dropping goes to alerts. off sends none.
+# ntfy notices through the notify command: APRS messages for this station go to notify_topic; a radio
+# restart, the first packet heard after it, nothing heard, and a beacon carried after it go to alerts.
+# off sends none.
 notify = on
 notify_topic = aprs
 
-# After the TNC port drops and returns, send one check beacon 2 minutes later. If no iGate carries it,
-# or two scheduled beacons in a row reach none, run power_cycle_cmd once (at most once in 30 minutes,
-# never while xara is keyed) and tell alerts; with no command set, ask on alerts at priority 5 instead.
+# After the TNC port drops and returns, d750-aprs resets the TNC 2 minutes later (once more a minute after
+# that if the radio does not confirm it). Then, with this on, one check beacon. An iGate carrying it is
+# good news; none carrying it is usual and raises no alarm.
 restart_check = on
+# Minutes after a restart with nothing heard before one notice on alerts. 0 sends none.
+deaf_minutes = 90
+# Nothing runs this yet. A real check that the radio transmits will; the iGate test never does.
 # For example: d750-power cycle 10   (the relay on the Leonardo, relay/d750-relay)
 # or a Home Assistant webhook that switches the supply off and on: curl -fsS -m 10 -X POST http://HA:8123/api/webhook/ID
 power_cycle_cmd =
