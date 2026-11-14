@@ -273,41 +273,210 @@ with tempfile.TemporaryDirectory() as tmp:
 check("KISS settings", aprs.kiss_params(aprs.DEFAULTS), bytes([0xC0, 1, 30, 0xC0, 0xC0, 2, 255, 0xC0, 0xC0, 3, 10, 0xC0, 0xC0, 5, 0, 0xC0]))
 check("KISS settings kept in range", aprs.kiss_params(dict(aprs.DEFAULTS, kiss_txdelay="999"))[2], 255)
 
-# After a restart: power cycle once when the radio does not send, never twice in 30 minutes, never while
-# keyed, and ask Jon when it cannot. A stand-in runs instead of the command; nothing is switched.
-ran, told = [], []
+# After a restart: one notice with the day's count, a TNC reset before the check beacon, what is heard, and no
+# claim about transmitting. Recorders stand in for ntfy, Kuma, CAT, the timer and the air; nothing is switched.
+# Each group runs on its own, so a missing method fails that group instead of stopping the script.
+from datetime import datetime
+
+
+def group(fn):
+    global failed
+    try:
+        fn()
+    except Exception as e:
+        failed += 1
+        print(f"Fail: {fn.__name__} stopped: {type(e).__name__}: {e}")
+
+
+T = datetime(2026, 11, 14, 11, 39).timestamp()      # 11:39 local time, whatever the time zone
+ran = []
 real = aprs._quietly
 aprs._quietly = lambda *a: ran.append(a)
-with tempfile.TemporaryDirectory() as tmp:
-    aprs.STATE, aprs.MESSAGES = os.path.join(tmp, "state.json"), os.path.join(tmp, "messages.jsonl")
-    d = aprs.Daemon(dict(aprs.DEFAULTS, call=me, transmit="on"))
-    d.say = d.raw = d.push = lambda *a, **k: None
-    d.notify = lambda topic, title, msg, prio=3: told.append((topic, title, prio))
+tmpdir = tempfile.TemporaryDirectory()
+aprs.STATE, aprs.MESSAGES = os.path.join(tmpdir.name, "state.json"), os.path.join(tmpdir.name, "messages.jsonl")
+
+
+states = []
+
+
+def fresh(keep=False, **conf):
+    """A daemon whose every way out is a recorder: notices, pushes, CAT, timers and frames on the air. Each has
+    a state file of its own unless keep, which reads the one before, as a restarted daemon would."""
+    if not keep:
+        states.append(os.path.join(tmpdir.name, f"state-{len(states)}.json"))
+        aprs.STATE = states[-1]
+    d = aprs.Daemon(dict(aprs.DEFAULTS, call=me, transmit="on", lat="41.7", lon="-72.7", **conf))
+    d.lines, d.told, d.later, d.seq, d.pushed = [], [], [], [], []
+    d.say = d.lines.append
+    d.raw = lambda *a: None
+    d.push = lambda what, msg, up=True: d.pushed.append((what, msg))
+    d.notify = lambda topic, title, msg, prio=3: d.told.append((topic, title, msg, prio))
+    d._later = lambda delay, fn, *a: d.later.append((delay, fn.__name__, a))
+    d._cat = lambda line: d.seq.append(("cat", line)) or ""        # d750d not answering: not confirmed
+    d.send_frame = lambda info, path=None, why="": d.seq.append(("air", info)) or True
+    d.serial = FakeSerial()
+    d.watch_up = True
     d._keyed = lambda: False
-    later, resets = [], []
-    d._later = lambda delay, fn, *a: later.append((delay, a))
-    d._reset_tnc = lambda: resets.append(1) or True
-    d._not_sending("a test")
-    check("first a TNC reset and a check again, nothing else", (resets, later, ran, told), ([1], [(60, ("the TNC reset",))], [], []))
-    d._not_sending("a test")
-    check("no command set: ask Jon, priority 5", (ran, told[-1]), ([], ("alerts", "TM-D750 is not transmitting", 5)))
+    return d
+
+
+def restart_count():
+    check("time spans in words", [aprs.span_words(s) for s in (30, 13 * 60, 3 * 3600 + 4 * 60, 7200)],
+          ["under a minute", "13 min", "3 h 4 min", "2 h"])
+    d = fresh()
+    check("a restart counts", d._restart_seen(now=T), True)
+    check("one notice, priority 3", d.told, [("alerts", "TM-D750 restarted, 11:39", "Restart 1 today. TNC reset follows.", 3)])
+    kept = json.load(open(aprs.STATE))
+    check("count and time kept in the state file", (kept.get("restarts_today"), kept.get("last_restart")), (1, T))
+    d = fresh(keep=True)                             # the daemon itself restarted: the count comes from the file
+    d._restart_seen(now=T + 3 * 3600 + 4 * 60)
+    check("the count survives a daemon restart, with the gap", d.told,
+          [("alerts", "TM-D750 restarted, 14:43", "Restart 2 today. 3 h 4 min after the last one. TNC reset follows.", 3)])
+    check("a second drop within 2 minutes is the same restart", d._restart_seen(now=T + 3 * 3600 + 4 * 60 + 30), False)
+    check("and gives no second notice", (len(d.told), json.load(open(aprs.STATE))["restarts_today"]), (1, 2))
+    d._restart_seen(now=T + 24 * 3600)
+    check("a new day starts the count again", d.told[-1][2], "Restart 1 today. 20 h 56 min after the last one. TNC reset follows.")
+
+
+def reset_first():
+    d = fresh()
+    d._after_return()
+    check("the TNC reset waits CHECK_AFTER", [x[:2] for x in d.later], [(aprs.CHECK_AFTER, "_reset_after_return")])
+    d._reset_after_return(*d.later[-1][2])
+    check("reset sent, no beacon yet when not confirmed", d.seq, [("cat", "TN 0,1"), ("cat", "TN 2,1")])
+    check("one more try a minute later", d.later[-1][:2], (60, "_reset_after_return"))
+    d._reset_after_return(*d.later[-1][2])
+    check("then a line that it was not confirmed", any("did not confirm" in x for x in d.lines), True)
+    check("and the check beacon after the reset", [k for k, _ in d.seq], ["cat", "cat", "cat", "cat", "air"])
+    check("no third try", [x[1] for x in d.later].count("_reset_after_return"), 2)
+    d = fresh()
+    d._cat = lambda line: d.seq.append(("cat", line)) or line          # the radio answers: confirmed
+    d._after_return()
+    d._reset_after_return(*d.later[-1][2])
+    check("confirmed: reset, then the check beacon", d.seq,
+          [("cat", "TN 0,1"), ("cat", "TN 2,1"), ("air", aprs.beacon_info(d.conf))])
+    check("the KISS settings again with the reset", d.serial.sent, [aprs.kiss_params(d.conf)])
+    check("a line that the radio confirmed it", any("confirmed it" in x and "not" not in x for x in d.lines), True)
+    d = fresh()
+    d._after_return()
+    d._after_return()                                 # the double drop: the second return replaces the first
+    for _, _, args in list(d.later):
+        d._reset_after_return(*args)
+    check("a double drop resets once", [x for x in d.seq if x[0] == "cat"].count(("cat", "TN 0,1")), 1)
+    d = fresh(restart_check="off")
+    d._cat = lambda line: d.seq.append(("cat", line)) or line
+    d._after_return()
+    d._reset_after_return(*d.later[-1][2])
+    check("restart_check off: the reset, no check beacon", [k for k, _ in d.seq], ["cat", "cat"])
+
+
+def hearing():
+    d = fresh()
+    d._restart_seen(now=T)
+    calls = []
+    d._heard_air = lambda now=None: calls.append(1)
+    d.on_frame(aprs.ax25_encode("K7ABC-9", "APRS", [], ">x"))
+    check("a frame from the TNC counts as heard", calls, [1])
+    del d._heard_air
+    d.told.clear()
+    d._heard_air(now=T + 13 * 60)
+    check("hearing again, priority 2", d.told, [("alerts", "TM-D750 hearing again, 11:52", "First packet 13 min after the 11:39 restart.", 2)])
+    check("and one line", d.lines[-1], "First packet heard 13 min after the 11:39 restart.")
+    d._heard_air(now=T + 14 * 60)
+    check("only the first packet", len(d.told), 1)
+    d._deaf_check(T, now=T + 90 * 60)
+    check("no deaf notice once a packet came", len(d.told), 1)
+    d = fresh()
+    d._heard_air(now=T)
+    check("no hearing notice without a restart", d.told, [])
+
+
+def deaf():
+    d = fresh()
+    d._restart_seen(now=T)
+    check("deaf timer set for 90 minutes", [x for x in d.later if x[1] == "_deaf_check"], [(5400, "_deaf_check", (T,))])
+    d.told.clear()
+    d._deaf_check(T, now=T + 5400)
+    check("deaf notice, priority 4", d.told, [("alerts", "TM-D750 has heard nothing since 11:39", "90 min since it restarted. Check the radio.", 4)])
+    d._deaf_check(T, now=T + 5400)
+    check("deaf notice once a restart", len(d.told), 1)
+    d._heard_air(now=T + 100 * 60)
+    check("hearing again still goes out after it", d.told[-1], ("alerts", "TM-D750 hearing again, 13:19", "First packet 1 h 40 min after the 11:39 restart.", 2))
+    d = fresh(deaf_minutes="0")
+    d._restart_seen(now=T + 600)
+    check("deaf_minutes 0 turns it off", [x for x in d.later if x[1] == "_deaf_check"], [])
+    d = fresh()
+    d._restart_seen(now=T + 1200)
+    d._restart_seen(now=T + 9000)
+    d.told.clear()
+    d._deaf_check(T + 1200, now=T + 1200 + 5400)
+    check("no deaf notice for an earlier restart", d.told, [])
+    d.serial = None
+    aprs.radio_on_usb, real_usb = (lambda vendor="2166": False), aprs.radio_on_usb
+    d._deaf_check(T + 9000, now=T + 9000 + 5400)
+    aprs.radio_on_usb = real_usb
+    check("no deaf notice with the radio switched off", d.told, [])
+
+
+def igate_miss():
+    ran.clear()
+    d = fresh(power_cycle_cmd="d750-power cycle 10")
+    d._restart_seen(now=T)
+    d._after_return()
+    d._reset_after_return(*d.later[-1][2])
+    d._reset_after_return(*d.later[-1][2])            # the reset not confirmed either: still no alarm
+    d.told.clear()
+    seq = len(d.seq)
+    for _ in range(3):                               # the check beacon and two scheduled ones, none carried
+        if d.beacon_watch is None:
+            d.beacon("timer")
+        d._beacon_check(d.beacon_watch)
+    check("no iGate: no notice", d.told, [])
+    check("no iGate: no power cycle", ran, [])
+    check("no iGate: no TNC reset", [k for k, _ in d.seq[seq:]], ["air", "air"])
+    check("no iGate: a line that says it is usual here", any("usual here" in x for x in d.lines), True)
+
+
+def good_news():
+    d = fresh()
+    d._restart_seen(now=T)
+    d.told.clear()
+    d.beacon_watch = T
+    d._own_seen(f"{me}>APZ750,WIDE1-1,qAR,K7BCX-10:=hello", now=T + 180)
+    check("carried after a restart: one notice, priority 2", d.told,
+          [("alerts", "TM-D750 beacon carried by K7BCX-10, 11:42", "First beacon carried since the 11:39 restart.", 2)])
+    check("the Kuma beacon push stays", d.pushed[-1], ("beacon", "beacon carried by K7BCX-10"))
+    d.beacon_watch = T
+    d._own_seen(f"{me}>APZ750,WIDE1-1,qAR,K7BCX-10:=hello", now=T + 1800)
+    check("once a restart", (len(d.told), len(d.pushed)), (1, 2))
+    d = fresh()
+    d.beacon_watch = T
+    d._own_seen(f"{me}>APZ750,WIDE1-1,qAR,K7BCX-10:=hello", now=T)
+    check("carried with no restart: the push, no notice", (d.told, len(d.pushed)), ([], 1))
+
+
+def no_transmit_claim():
+    src = open(os.path.join(HERE, "d750-aprs.py"), encoding="utf-8").read()
+    for words in ("is not transmitting", "power cycled by the station computer", "Power cycle the radio", "Power cycle it by hand",
+                  "sending again", "_not_sending"):
+        check(f"gone from d750-aprs: {words}", words in src, False)
+    check("nothing calls the power cycle yet", src.count("power_cycle_after_transmit_check("), 1)
+    ran.clear()
+    d = fresh()
+    check("the kept power cycle needs a command", (d.power_cycle_after_transmit_check("a test"), ran), (False, []))
     d.conf["power_cycle_cmd"] = "d750-power cycle 10"
-    d._not_sending("a test")
-    check("power cycled once", ran, [("d750-power", "cycle", "10")])
-    check("and said so, priority 4", told[-1], ("alerts", "TM-D750 power cycled by the station computer", 4))
-    check("the time is kept", json.load(open(aprs.STATE)).get("last_power_cycle", 0) > 0, True)
-    d._not_sending("a test")
-    check("not twice in 30 minutes: ask Jon", (len(ran), told[-1][2]), (1, 5))
+    check("it runs the command once", (d.power_cycle_after_transmit_check("a test"), ran), (True, [("d750-power", "cycle", "10")]))
+    check("and keeps the time", json.load(open(aprs.STATE)).get("last_power_cycle", 0) > 0, True)
+    check("not twice in 30 minutes", (d.power_cycle_after_transmit_check("a test"), len(ran)), (False, 1))
     d.last_cycle = 0
     d._keyed = lambda: True
-    d._not_sending("a test")
-    check("never while xara is keyed", len(ran), 1)
-    d._keyed = lambda: False
-    d.last_cycle = time.time() - 60
-    d.recovery = "the radio came back on USB"
-    d.beacon_watch = time.time()                    # the check beacon is being watched
-    d._own_seen(f"{me}>APZ750,WIDE1-1,qAR,K7BCX-10:=hello")
-    check("sending again after the cycle, priority 3", (d.recovery, told[-1]), (None, ("alerts", "TM-D750 sending again", 3)))
+    check("never while xara is keyed", (d.power_cycle_after_transmit_check("a test"), len(ran)), (False, 1))
+    check("and it sends no notice itself", d.told, [])
+
+
+for g in (restart_count, reset_first, hearing, deaf, igate_miss, good_news, no_transmit_claim):
+    group(g)
+tmpdir.cleanup()
 aprs._quietly = real
 
 # The status message: on the air and straight to APRS-IS, so aprs.fi shows it; nothing when none is set.

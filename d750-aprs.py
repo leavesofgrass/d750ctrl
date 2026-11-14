@@ -39,9 +39,10 @@ DIGI_WORDS = {"off": "Digipeater off", "fillin": "Fill-in digipeater", "wide": "
 # Uptime Kuma push URLs, written by ~/lab/kuma/setup-kuma.py. Each push is skipped while its file is missing.
 PUSH_FILES = {w: f"~/.config/kuma-push-url-aprs-{w}" for w in ("tnc", "igate", "heard", "beacon")}
 HEARTBEAT = 300           # seconds between pushes that say the TNC and the iGate link are up
-CHECK_AFTER = 120         # seconds after the radio comes back before the check beacon
+CHECK_AFTER = 120         # seconds after the radio comes back before the TNC reset, then the check beacon
 CYCLE_GAP = 1800          # at most one automatic power cycle in this many seconds
 RESTART_GAP = 180         # the TNC port back within this many seconds: the radio restarted, not switched off
+RESTART_FOLD = 120        # a second restart within this many seconds of the last is the same one: it dropped twice
 
 
 def radio_on_usb(vendor="2166"):
@@ -74,6 +75,16 @@ def push_url(base, msg, up=True):
     """A Kuma push URL from the one in the file, with this status and message."""
     return base.split("?", 1)[0] + "?" + urllib.parse.urlencode({"status": "up" if up else "down", "msg": msg, "ping": ""})
 
+
+def span_words(seconds):
+    """A time span as a notice says it: under a minute, 13 min, 2 h, 3 h 4 min."""
+    m = int(seconds // 60)
+    if m < 1:
+        return "under a minute"
+    if m < 60:
+        return f"{m} min"
+    return f"{m // 60} h" + (f" {m % 60} min" if m % 60 else "")
+
 DEFAULTS = {
     "call": "N0CALL",
     "tnc": "/dev/d750-tnc",
@@ -100,6 +111,7 @@ DEFAULTS = {
     "notify": "on",
     "notify_topic": "aprs",
     "restart_check": "on",
+    "deaf_minutes": "90",
     "power_cycle_cmd": "",
     "status": "",
     "status_interval": "360",
@@ -801,12 +813,14 @@ class Daemon:
         self.gated = 0
         self.gate_seen = {}
         self.beacon_watch = None
-        self.beacon_misses = 0
         self.watch_up = False
-        self.recovery = None           # why we are checking that the radio still sends, while a check runs
         self.radio_off_since = None    # when the radio was last seen gone from USB: switched off
         self.port_lost_at = None
-        self.tnc_reset_tried = False   # one TNC reset is tried before any power cycle
+        self.return_token = None       # the latest return of the TNC port; an older one's reset is dropped
+        self.restart_at = None         # when the radio last restarted by itself, while this daemon ran
+        self.heard_since_restart = False
+        self.deaf_said = False
+        self.carried_said = False
         self.last_cycle = float(self.state.get("last_power_cycle", 0.0))
         self.digi = conf["digi"].lower() if conf["digi"].lower() in DIGI_WORDS else "off"
         self.digi_aliases = [a.strip() for a in conf["digi_aliases"].replace(",", " ").split() if a.strip()]
@@ -884,7 +898,7 @@ class Daemon:
             elif self.watch_up and mode in ("watch", "fallback"):
                 # Watch APRS-IS for the beacon gated from the air; the radio never hears its own.
                 token = self.beacon_watch = time.time()
-                asyncio.get_running_loop().call_later(BEACON_WAIT, self._beacon_check, token)
+                self._later(BEACON_WAIT, self._beacon_check, token)
 
     def msg_event(self, **event):
         """One line in the message history that aprschat reads: time, direction, call, and what happened."""
@@ -932,6 +946,8 @@ class Daemon:
 
     # -- receiving
     def on_frame(self, frame, from_client=None):
+        if from_client is None:
+            self._heard_air()          # a data frame from the TNC: the radio hears, whatever the packet says
         note = self._digi_consider(frame)
         d = ax25_decode(frame)
         if not d:
@@ -1041,7 +1057,9 @@ class Daemon:
         tail = "" if self.transmit else ", but transmitting is off, so it repeats nothing"
         return f"{DIGI_WORDS[self.digi]} on{tail}. {self.repeated} repeated."
 
-    # -- after a restart: check that the radio still sends, and power cycle it when it does not
+    # -- after a restart: count it, reset the TNC, and say only what is known: whether the radio hears.
+    # Nothing here claims the radio transmits or not. An iGate carrying the beacon is good news, but here one
+    # carried it twice in ten days, so none carrying it proves nothing and raises no alarm.
     def _port_lost_flag(self):
         return getattr(self, "_port_lost", False)
 
@@ -1052,20 +1070,83 @@ class Daemon:
         self.radio_off_since = self.radio_off_since or time.time()
         return True
 
-    def _restart_seen(self):
-        self.tnc_reset_tried = False
-        if self.conf["restart_check"].lower() in ("on", "yes"):
-            asyncio.get_running_loop().call_later(CHECK_AFTER, self._check_sending, "the radio came back on USB")
+    def _restart_seen(self, now=None):
+        """The TNC port came back within RESTART_GAP: the radio restarted by itself. One notice with the day's
+        count, kept in the state file so a restart of this daemon keeps it. False for a second drop within
+        RESTART_FOLD, which is the same restart."""
+        now = time.time() if now is None else now
+        last = float(self.state.get("last_restart", 0.0))
+        if last and 0 <= now - last < RESTART_FOLD:
+            self.say(f"The radio dropped again, {int(now - last)} seconds after it came back: "
+                     f"the same restart as {datetime.fromtimestamp(last):%H:%M}.")
+            return False
+        day = f"{datetime.fromtimestamp(now):%Y-%m-%d}"
+        count = self.state.get("restarts_today", 0) + 1 if self.state.get("restarts_day") == day else 1
+        self.state.update(restarts_day=day, restarts_today=count, last_restart=now)
+        self._save_state()
+        self.restart_at, self.heard_since_restart, self.deaf_said, self.carried_said = now, False, False, False
+        when = f"{datetime.fromtimestamp(now):%H:%M}"
+        gap = f" {span_words(now - last)} after the last one." if last and now > last else ""
+        self.say(f"The radio restarted at {when}: restart {count} today.{gap}")
+        self.notify("alerts", f"TM-D750 restarted, {when}", f"Restart {count} today.{gap} TNC reset follows.", 3)
+        deaf = int(self.conf.get("deaf_minutes") or 0)
+        if deaf > 0:
+            self._later(deaf * 60, self._deaf_check, now)
+        return True
 
-    def _check_sending(self, reason):
-        """One beacon, watched on APRS-IS: the only sure sign that the radio transmits."""
-        if not (self.transmit and self.serial and self.watch_up and self.home):
-            self.say(f"Cannot check that the radio sends, after {reason}: transmitting is off, the TNC is not "
-                     "connected, or the APRS-IS watch is down.")
+    def _after_return(self):
+        """After every return of the TNC port: a TNC reset at CHECK_AFTER, then the check beacon. A second
+        return before then, the double drop, replaces the first, so the reset runs once."""
+        token = self.return_token = object()
+        self._later(CHECK_AFTER, self._reset_after_return, token, 1)
+
+    def _reset_after_return(self, token, attempt):
+        """The TNC reset after a return, without waiting for any test. d750d reopens its own port up to about
+        45 seconds after the radio is back, so an unconfirmed reset is tried once more a minute later."""
+        if token is not self.return_token:
             return
-        self.recovery = reason
-        self.say(f"Checking that the radio still sends, after {reason}: one beacon.")
+        ok = self._reset_tnc()
+        if not ok and attempt == 1:
+            self.say("TNC reset after the radio came back, but d750d did not confirm it. Trying once more in a minute.")
+            self._later(60, self._reset_after_return, token, 2)
+            return
+        self.say("TNC reset after the radio came back: the radio confirmed it." if ok else
+                 "TNC reset tried twice after the radio came back: the radio did not confirm it.")
+        self._check_beacon("the radio came back on USB")
+
+    def _check_beacon(self, reason):
+        """One beacon, watched on APRS-IS. An iGate carrying it is good news; none carrying it is usual here."""
+        if self.conf["restart_check"].lower() not in ("on", "yes"):
+            return
+        if not (self.transmit and self.serial and self.watch_up and self.home):
+            self.say(f"No check beacon after {reason}: transmitting is off, the TNC is not connected, "
+                     "or the APRS-IS watch is down.")
+            return
+        self.say(f"Check beacon after {reason}.")
         self.beacon("check")
+
+    def _heard_air(self, now=None):
+        """A frame from the radio's TNC. The first after a restart says the radio hears again."""
+        if self.restart_at is None or self.heard_since_restart:
+            return
+        now = time.time() if now is None else now
+        self.heard_since_restart = True
+        since = f"{span_words(now - self.restart_at)} after the {datetime.fromtimestamp(self.restart_at):%H:%M} restart."
+        self.say(f"First packet heard {since}")
+        self.notify("alerts", f"TM-D750 hearing again, {datetime.fromtimestamp(now):%H:%M}", f"First packet {since}", 2)
+
+    def _deaf_check(self, token, now=None):
+        """deaf_minutes after a restart with nothing heard: one notice for that restart. None when a later
+        restart came, a packet came, or the radio is switched off, a normal state."""
+        if token != self.restart_at or self.heard_since_restart or self.deaf_said:
+            return
+        if not self.serial and self.radio_off():
+            return
+        self.deaf_said = True
+        when = f"{datetime.fromtimestamp(token):%H:%M}"
+        mins = int(self.conf.get("deaf_minutes") or 0)
+        self.say(f"Nothing heard since the radio restarted at {when}, {mins} minutes ago.")
+        self.notify("alerts", f"TM-D750 has heard nothing since {when}", f"{mins} min since it restarted. Check the radio.", 4)
 
     def _cat(self, line):
         """One Kenwood command through d750d's command port; its answer, or "" when d750d does not answer."""
@@ -1097,70 +1178,53 @@ class Daemon:
         except OSError:
             return False
 
-    def _not_sending(self, reason):
-        """The radio sent nothing an iGate heard: reset the TNC once, then power cycle it once, or ask Jon to."""
-        self.recovery = None
-        if not self.tnc_reset_tried:
-            self.tnc_reset_tried = True
-            ok = self._reset_tnc()
-            self.say(f"The radio is not sending, after {reason}. TNC reset and KISS settings sent again"
-                     f"{'' if ok else ', but d750d did not confirm it'}; checking again in a minute.")
-            self._later(60, self._check_sending, "the TNC reset")
-            return
+    def power_cycle_after_transmit_check(self, reason):
+        """Run power_cycle_cmd once: at most once in CYCLE_GAP, never while xara is keyed. True when it ran.
+
+        Nothing calls this yet. A real check that the radio transmits will call it later; the iGate test is not
+        one, since an iGate here carries the beacon only now and then. It sends no notice: the caller says what
+        it knows."""
         cmd, now = self.conf["power_cycle_cmd"].strip(), time.time()
-        when = f"{datetime.now():%H:%M}"
-        if cmd and now - self.last_cycle > CYCLE_GAP and not self._keyed():
-            self.last_cycle = now
-            self.state["last_power_cycle"] = now
-            self._save_state()
-            self.say(f"The radio is not sending, after {reason}. Power cycling it: {cmd}")
-            _quietly(*shlex.split(cmd))
-            self.notify("alerts", "TM-D750 power cycled by the station computer",
-                        f"After {reason}, at {when}, its beacon reached no iGate. The station computer ran {cmd} and checks again "
-                        "when the radio is back.", 4)
-            return
-        why = ("no power_cycle_cmd is set" if not cmd else
-               "The station computer already power cycled it in the last 30 minutes" if now - self.last_cycle <= CYCLE_GAP else
-               "xara is transmitting")
-        self.say(f"The radio is not sending, after {reason}, and {why}. Power cycle it by hand.")
-        self.notify("alerts", "TM-D750 is not transmitting",
-                    f"After {reason}, at {when}, its beacon reached no iGate, and {why}. Power cycle the radio.", 5)
+        if not cmd or now - self.last_cycle <= CYCLE_GAP or self._keyed():
+            return False
+        self.last_cycle = now
+        self.state["last_power_cycle"] = now
+        self._save_state()
+        self.say(f"Power cycling the radio, after {reason}: {cmd}")
+        _quietly(*shlex.split(cmd))
+        return True
 
     # -- the iGate
     def _direct_beacon(self):
         return f"{self.call}>{self.conf['tocall']},TCPIP*:{beacon_info(self.conf)}"
 
-    def _own_seen(self, line):
-        """Our own call came back from APRS-IS: an iGate passed the beacon on."""
+    def _own_seen(self, line, now=None):
+        """Our own call came back from APRS-IS: an iGate passed the beacon on. Good news, and the first time
+        after a restart it is said on ntfy too."""
         if not self.beacon_watch:
             return
         self.beacon_watch = None
-        self.beacon_misses = 0
         who = igate_of(line)
         self.say(f"Our beacon reached APRS-IS through {who[1]}." if who else "Our beacon reached APRS-IS.")
         self.push("beacon", f"beacon carried by {who[1]}" if who else "beacon on APRS-IS")
-        if self.recovery:
-            self.tnc_reset_tried = False
-            self.say(f"Sending works after {self.recovery}.")
-            if time.time() - self.last_cycle < 900:
-                self.notify("alerts", "TM-D750 sending again",
-                            f"After the power cycle the station computer ran at {datetime.fromtimestamp(self.last_cycle):%H:%M}, "
-                            "its beacon reached APRS-IS again.", 3)
-            self.recovery = None
+        if self.restart_at is not None and not self.carried_said:
+            self.carried_said = True
+            now = time.time() if now is None else now
+            self.notify("alerts", f"TM-D750 beacon carried by {who[1] if who else 'an iGate'}, "
+                        f"{datetime.fromtimestamp(now):%H:%M}",
+                        f"First beacon carried since the {datetime.fromtimestamp(self.restart_at):%H:%M} restart.", 2)
 
     def _beacon_check(self, token):
+        """No iGate carried the beacon. Usual at this station, so a line in the log and nothing more: no notice,
+        no TNC reset and no power cycle because of it."""
         if self.beacon_watch != token:
             return
         self.beacon_watch = None
-        self.beacon_misses += 1
+        usual = "That is usual here and says nothing about sending."
         if self.conf["aprsis_beacon"].lower() == "fallback" and self.is_writer and self._is_send(self._direct_beacon()):
-            self.say(f"No iGate passed our beacon to APRS-IS in {BEACON_WAIT} seconds. Sent it there directly.")
+            self.say(f"No iGate passed our beacon to APRS-IS in {BEACON_WAIT} seconds. {usual} Sent it there directly.")
         else:
-            self.say(f"No iGate passed our beacon to APRS-IS in {BEACON_WAIT} seconds.")
-        if self.recovery:
-            self._not_sending(self.recovery)
-        elif self.beacon_misses == 2:
-            self._not_sending("two beacons in a row that reached no iGate")
+            self.say(f"No iGate passed our beacon to APRS-IS in {BEACON_WAIT} seconds. {usual}")
 
     def _gate(self, source, dest, digis, info):
         line = igate_line(source, dest, digis, info, self.call)
@@ -1335,18 +1399,18 @@ class Daemon:
             self.serial = s
             if self._port_lost_flag():
                 gap = time.time() - (self.port_lost_at or time.time())
+                then = f"a TNC reset follows in {CHECK_AFTER // 60} minutes" + (
+                    ", then a check beacon" if self.conf["restart_check"].lower() in ("on", "yes") else "")
                 if gap < RESTART_GAP:
                     # Back within minutes: the radio restarted by itself, a brownout most likely.
-                    self.say(f"Listening on {self.conf['tnc']} again after {int(gap)} seconds: the radio restarted. "
-                             f"A check beacon follows in {CHECK_AFTER // 60} minutes.")
-                    self.notify("alerts", "TM-D750 restarted by itself",
-                                f"The radio dropped off USB and came back at {datetime.now():%H:%M}. d750-aprs checks "
-                                "that it still transmits and resets the TNC if not.", 4)
+                    self.say(f"Listening on {self.conf['tnc']} again after {int(gap)} seconds: the radio restarted; "
+                             f"{then}.")
+                    self._restart_seen()
                 else:
                     self.say(f"The radio is back after {gap / 60:.0f} minutes off. Listening on {self.conf['tnc']}; "
-                             f"a check beacon follows in {CHECK_AFTER // 60} minutes.")
+                             f"{then}.")
                 self._port_lost, self.radio_off_since = False, None
-                self._restart_seen()
+                self._after_return()
             else:
                 self.say(f"Listening on {self.conf['tnc']}.")
             lost = asyncio.get_running_loop().create_future()
