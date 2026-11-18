@@ -31,8 +31,10 @@ what your firmware answers.
   d750-aprs cannot tell that from the computer. An iGate carries this station's beacon only now and
   then, so a beacon nobody carried proves nothing. d750-aprs says when the radio restarts and
   whether it hears again, and leaves transmitting to a real check.
-- By November 17, 2026, after thorough testing, the radio was transmitting after it restarted by
-  itself. The computer still has no way to know that on its own.
+- By November 17, 2026, after a week of testing, the radio restarts by itself about every 3 hours
+  and 4 minutes. The cause is not known. It does not follow a drop in supply voltage. It transmits
+  normally after each restart: d750-aprs, already running, picks it up again and goes on regulating
+  its transmissions. The computer still has no way to check the transmitter on its own.
 
 ## Which command tells the transmit band
 
@@ -90,7 +92,9 @@ the raw TX and RX commands, and offers Hamlib's protocol on its own port instead
 ## Where another project found differently
 
 A public project, [kenwood](https://github.com/swiftraccoon/kenwood), licensed GPL-2.0-or-later,
-also talks to the TM-D750. It was exercised on firmware 1.02 (type K,2,1). Two of its findings
+also talks to the TM-D750. It was exercised on firmware 1.02 (type K,2,1). The radio behind this
+project reports firmware 1.03, so a difference below may be the firmware and not a mistake on either
+side. Two of its findings
 differ from what d750ctrl recorded. Each side and its evidence is stated below, and no more than
 the evidence. Nothing from the other project has been checked on the radio used here. For the
 full list of commands and how each fact is sourced, see the

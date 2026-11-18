@@ -13,7 +13,7 @@ first. For the cabling and menu settings to use, read [Radio setup](radio-setup.
 Every fact carries one of three labels, written exactly like this:
 
 - Seen on the author's radio: from this project's own code, simulator, change log and old README.
-  It was observed on one radio, with one firmware, and may differ on yours.
+  It was observed on one radio, which reports firmware 1.03, and may differ on yours.
 - Reported by another project, not verified here: from a public project that was exercised on
   firmware 1.02 (type K,2,1). It is written here in this project's words, and nobody here has
   checked it.

@@ -9,7 +9,8 @@
   reference to the radio as a computer sees it. "Try it without a radio" runs the tools against the pretend radio.
 - Fixed: `d750-sstv tx` and `d750-rtty tx` keyed the radio and unkeyed it a few milliseconds later. The keyer
   closed its connection after keying, and d750d unkeys when a keying client disconnects. The keyer now holds one
-  connection for the whole transmission. Checked against the pretend radio, and then on the air.
+  connection for the whole transmission. Checked against the pretend radio; both modes were also sent
+  and decoded in a closed loop over a virtual sound device. Not yet confirmed on the air.
 - Fixed: `d750 raw`, `d750 tnc off` and `d750 tnc aprs` exited 1 on success, and `d750 vara status` did with no
   log yet. `d750 ptt off` now exits 1 when the radio does not confirm the unkey, and `d750 level` when it
   recorded nothing.
