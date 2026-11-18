@@ -90,25 +90,26 @@ for each step, in this order.
 
 1. It links d750, d750ctrl, d750-sstv, d750-rtty, d750-aprs, aprschat and d750-power into
    `~/.local/bin`. A link of the same name is replaced.
-2. It writes `~/.config/systemd/user/d750d.service` from the template `d750d.service.in`, with
-   the path of your clone filled in, and reloads systemd. If d750d is already running it restarts
-   it. If not, it enables d750d at login and starts it now. The line it prints says whether d750d
-   is active. The service runs `/usr/bin/python3 -I` on `d750d.py` in your clone, restarts itself
-   after a failure with a five second wait, and is ordered before the xara service.
+2. It writes `~/.config/systemd/user/d750d.service` from the template `config/d750d.service.in`,
+   with the path of your clone filled in, and reloads systemd. If d750d is already running it
+   restarts it. If not, it enables d750d at login and starts it now. The line it prints says whether
+   d750d is active. The service runs `/usr/bin/python3 -I` on `d750d.py` in your clone, restarts
+   itself after a failure with a five second wait, and is ordered before the xara service.
 3. It makes a Python environment in `.venv` inside your clone, if there is none, and installs
    sstv, pillow and numpy into it. SSTV and RTTY need it. If the environment exists, it says so and
    leaves it.
-4. It writes `~/.config/d750ctrl/d750ctrl.conf` from `d750ctrl.conf.example`, with your call sign
-   in capitals. If you gave no call sign, it asks. If the file exists, it keeps it. The line it
+4. It writes `~/.config/d750ctrl/d750ctrl.conf` from `config/d750ctrl.conf.example`, with your call
+   sign in capitals. If you gave no call sign, it asks. If the file exists, it keeps it. The line it
    prints says which, and reminds you to add the radio's Bluetooth address there if you pair it.
 5. It writes the d750-aprs service, `~/.config/systemd/user/d750-aprs.service`, from the template
-   `d750-aprs.service.in`, with the path of your clone filled in, and reloads systemd. It never
-   enables or starts that service, because d750-aprs can transmit. If the service already runs, it
-   keeps running as it is. It also writes `~/.config/d750ctrl/aprs.conf` from `aprs.conf.example`,
-   readable by you only, if the file is missing, and keeps it if it exists. The line it prints says
-   whether the service is active, and that this script did not start it. A second line says how to
-   turn APRS on: edit `aprs.conf`, then run `systemctl --user enable --now d750-aprs.service`.
-   Nothing transmits until you run `d750-aprs transmit on`.
+   `config/d750-aprs.service.in`, with the path of your clone filled in, and reloads systemd. It
+   never enables or starts that service, because d750-aprs can transmit. If the service already
+   runs, it keeps running as it is. It also writes `~/.config/d750ctrl/aprs.conf` from
+   `config/aprs.conf.example`, readable by you only, if the file is missing, and keeps it if it
+   exists. The line it prints says whether the service is active, and that this script did not start
+   it. A second line says how to turn APRS on: edit `aprs.conf`, then run
+   `systemctl --user enable --now d750-aprs.service`. Nothing transmits until you run
+   `d750-aprs transmit on`.
 
 After that, if `~/.local/bin` is not on your PATH, it prints a note saying so. The last line tells
 you the root step to run next, then `d750 doctor`, `d750 status` and `d750ctrl`, and points to
@@ -125,7 +126,7 @@ sudo ./install-udev.sh
 It must run as root once, because it writes into `/etc/udev/rules.d`, which only root may do. It
 uses the user who ran sudo. You can name another user: `sudo ./install-udev.sh USER`.
 
-1. It writes `/etc/udev/rules.d/60-d750ctrl.rules` from `udev/60-d750ctrl.rules`, with your user
+1. It writes `/etc/udev/rules.d/60-d750ctrl.rules` from `config/60-d750ctrl.rules`, with your user
    name filled in.
 2. It tells udev to reload its rules and to apply them again to serial devices that are already
    plugged in, so you do not need to replug anything.
@@ -204,10 +205,10 @@ yours, is this:
   lingering for your user with `loginctl enable-linger`; that is systemd's own setting and is not
   tested here.
 - The udev rule. It names the group uucp, which Arch has. If your distribution has no such group,
-  edit the rule, or the files in `udev/`, before running the script. The device is owned by your
-  user either way.
+  edit the rule, or the rule file in `config/`, before running the script. The device is owned by
+  your user either way.
 - The Python path. The service starts `/usr/bin/python3`. If yours is elsewhere, edit the line in
-  `d750d.service.in` before running `install.sh`.
+  `config/d750d.service.in` before running `install.sh`.
 
 ## See also
 

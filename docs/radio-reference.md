@@ -28,7 +28,7 @@ its code. Where the two projects disagree, the disagreement is stated in
 Three more things to know:
 
 - The project's tools never state your firmware version. The pretend radio (the simulator,
-  `d750-sim.py`) answers a made-up one for the tests. `d750 doctor` shows the one your radio
+  `tests/d750-sim.py`) answers a made-up one for the tests. `d750 doctor` shows the one your radio
   reports.
 - The pretend radio is written to answer the way the real radio was seen to answer for `ID`, `FV`,
   `TY`, `BC`, `FQ`, `MD`, `SQ`, `BY`, `TN`, `TX` and `RX`. For the other commands it follows a
@@ -52,7 +52,7 @@ The radio has two USB-C sockets, and each one shows up as its own device.
 
 ### Names and rules
 
-- The rule file is `udev/60-d750ctrl.rules`, installed by `install-udev.sh`. Its two rule lines
+- The rule file is `config/60-d750ctrl.rules`, installed by `install-udev.sh`. Its two rule lines
   match the two USB ids above, give the owner you name and the group `uucp`, and allow read and
   write for owner and group (mode 0660). Seen on the author's radio.
 - Both sockets report the same product name and no serial number. The usual names under

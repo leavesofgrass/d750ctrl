@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- A tidier top folder. The tests and the pretend radio are in tests/, and the settings examples, the service
+  templates and the udev rule are in config/. No program moved, so nothing installed changes: links and
+  services keep working after a pull, with no need to run the installer again.
 - The rig screen, the RTTY modem and radiogram still said MIT in their own headers and help text. They now say
   GPL-2.0-or-later, as the project does. The README's License section no longer mentions the old license.
 - The README and the docs say plainly that VARA is proprietary and not free software, that none of it is

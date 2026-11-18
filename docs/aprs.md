@@ -36,12 +36,12 @@ restart. The digipeater also needs transmit on, and it repeats nothing while tra
 - Keep transmitting handhelds away from the USB leads. A bus reset takes the radio and everything
   else on it.
 - `python3` with the `pyserial` module installed. d750-aprs is plain Python and needs nothing else.
-- A settings file. `install.sh` writes `~/.config/d750ctrl/aprs.conf` from `aprs.conf.example` if
-  there is none, readable by you only, because it holds your exact position and a passcode. If you
-  did not run `install.sh`, do the same by hand:
+- A settings file. `install.sh` writes `~/.config/d750ctrl/aprs.conf` from
+  `config/aprs.conf.example` if there is none, readable by you only, because it holds your exact
+  position and a passcode. If you did not run `install.sh`, do the same by hand:
 
 ```sh
-cp aprs.conf.example ~/.config/d750ctrl/aprs.conf
+cp config/aprs.conf.example ~/.config/d750ctrl/aprs.conf
 chmod 600 ~/.config/d750ctrl/aprs.conf
 ```
 
@@ -295,7 +295,7 @@ runs it now. See [d750-power and the relay](power-relay.md).
 ### Its service
 
 The daemon runs as a systemd user service, so that it starts for you and restarts if it fails. The
-file `d750-aprs.service.in` in the repository is the template: it runs `d750-aprs daemon` and
+file `config/d750-aprs.service.in` in the repository is the template: it runs `d750-aprs daemon` and
 restarts it 15 seconds after a failure. `install.sh` links the `d750-aprs` command, writes this
 service file from the template with the repository folder filled in, and writes `aprs.conf` from the
 example if there is none, readable by you only. It does not start the service, because the daemon

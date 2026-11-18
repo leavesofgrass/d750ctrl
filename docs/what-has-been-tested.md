@@ -74,7 +74,7 @@ printed firmware 1.03.
 
 ## Not run automatically
 
-- `modes-test.sh`, the SSTV and RTTY round trip. It needs a sound server, so it runs only on a
+- `tests/modes-test.sh`, the SSTV and RTTY round trip. It needs a sound server, so it runs only on a
   computer with one.
 - The RTTY modem selftest. It needs the Python environment that `install.sh` makes.
 

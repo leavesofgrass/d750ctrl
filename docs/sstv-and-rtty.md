@@ -36,7 +36,7 @@ radio through [d750d](d750d.md), so the radio is unkeyed again when they finish.
 ## Try it
 
 You can try the whole chain without a radio, with no keying, using a virtual sound device. The
-`modes-test.sh` script in the project does exactly that. See [Testing](testing.md).
+`tests/modes-test.sh` script in the project does exactly that. See [Testing](testing.md).
 
 On a real radio, listen for a picture, for the default 150 seconds:
 

@@ -7,9 +7,9 @@ on the [station tools page](station-tools.md).
 ## Where settings and data live
 
 - `~/.config/d750ctrl/d750ctrl.conf`: the main settings. `install.sh` writes it from
-  `d750ctrl.conf.example` the first time, with your call sign.
+  `config/d750ctrl.conf.example` the first time, with your call sign.
 - `~/.config/d750ctrl/aprs.conf`: the settings for d750-aprs. `install.sh` writes it from
-  `aprs.conf.example` if there is none.
+  `config/aprs.conf.example` if there is none.
 - `~/.config/d750ctrl/fixup.conf`: what `d750 fixup` puts back. `d750 fixup` writes it the first
   time.
 - `~/.config/d750ctrl/commands.txt`: the table `d750 probe` writes. It is not a setting.

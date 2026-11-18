@@ -6,9 +6,9 @@ here transmits, and no real radio is involved.
 
 ## What it is for
 
-The pretend radio is a small program, `d750-sim.py`. It answers the radio's commands on a pseudo
-terminal, which is a software stand-in for a serial port. A second copy of d750d talks to it on test
-ports, so the real daemon and your real radio are never touched. It is the same test bed the
+The pretend radio is a small program, `tests/d750-sim.py`. It answers the radio's commands on a
+pseudo terminal, which is a software stand-in for a serial port. A second copy of d750d talks to it
+on test ports, so the real daemon and your real radio are never touched. It is the same test bed the
 automated tests use. This page is for a curious reader who has no radio connected yet.
 
 ## Before you start
@@ -28,7 +28,7 @@ Start the pretend radio in a terminal of its own and leave it running:
 
 ```sh
 cd ~/d750ctrl
-./test-env.sh
+tests/test-env.sh
 ```
 
 It prints two lines. The first begins "simulator pid" and names the pseudo terminal. The second
@@ -133,7 +133,7 @@ unset D750_CMD_PORT D750_PTT_PORT D750_CONF_DIR
 - `d750 status` says d750d is not answering. The test bed is not running, or you did not export the
   two variables in this terminal. Check both.
 - The test bed prints "simulator gave no device path". Python could not start the simulator. Run
-  `python3 -I d750-sim.py` by hand in the clone to see the error.
+  `python3 -I tests/d750-sim.py` by hand in the clone to see the error.
 - The test daemon logs an error about the module serial. Install pyserial; see
   [Install](install.md).
 
