@@ -1,6 +1,6 @@
 #!/bin/bash
 # tests.sh: run every d750 verb against the simulator (ports 4542 and 4543) and check the answers.
-# Start the test bed first: ./test-env.sh. Written Saturday, November 7, 2026.
+# Start the test bed first: tests/test-env.sh. Written Saturday, November 7, 2026.
 export D750_CMD_PORT=4543 D750_PTT_PORT=4542 D750_LOG_DIR="$HOME/.local/share/d750ctrl/log/test"
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/d750ctrl-tests.XXXXXX"); trap 'rm -rf "$TMP"' EXIT
 # the tests get a settings folder of their own, so the operator's fixup.conf and call sign stay out of them
@@ -14,6 +14,7 @@ check() {  # check "name" "expected substring" command...
   if [[ $out == *"$want"* ]]; then pass=$((pass + 1)); printf 'Pass: %s\n' "$name"; else fail=$((fail + 1)); printf 'Fail: %s\n  wanted: %s\n  got (rc %s): %s\n' "$name" "$want" "$rc" "$(printf '%s' "$out" | head -4 | tr '\n' '|')"; fi
 }
 HERE=$(dirname "$(readlink -f "$0")")
+TOP=$(dirname "$HERE")
 LOG="$D750_LOG_DIR/d750d-$(date +%F).txt"
 lines() { wc -l < "$LOG" 2>/dev/null || echo 0; }
 logged() {  # logged TEXT FROM : is TEXT in the test daemon's log after line FROM?
@@ -65,7 +66,7 @@ check "ptt refused while locked" "RPRT -1" bash -c 'printf "T 1\n" | nc -w 2 127
 check "unlock" "unlocked" d750 unlock
 check "ptt key and unkey" "RPRT 0" bash -c 'printf "T 1\nT 0\n" | nc -w 2 127.0.0.1 4542 | tail -1'
 # d750-keyer's Keyed, as d750-sstv and d750-rtty use it: keyed half a second into the block, unkeyed after it
-keyed=$(python3 -I -B - "$HERE/d750-keyer.py" 2>&1 <<'PY'
+keyed=$(python3 -I -B - "$TOP/d750-keyer.py" 2>&1 <<'PY'
 import importlib.util, socket, sys, time
 spec = importlib.util.spec_from_file_location("keyer", sys.argv[1]); k = importlib.util.module_from_spec(spec); spec.loader.exec_module(k)
 if k.PTT_PORT != 4542: print(f"not the test port: {k.PTT_PORT}"); sys.exit(1)    # never key anything but the simulator
@@ -117,7 +118,7 @@ check "rigctl vfo info" "146520000" bash -c 'printf "\\\\get_vfo_info VFOB\\n" |
 check "rigctl extended reply" "Frequency: 146520000" bash -c 'printf "+f\n" | nc -w 2 127.0.0.1 4542'
 check "rigctl frequency back" "FQ 1,0144390000" bash -c "$R F 144390000 && d750 raw 'FQ 1'"
 # d750d's logging rules on their own: which reads stay out, APRS packet lines, the count of a repeated error
-unit=$(D750_LOG_DIR="$TMP/unit" python3 -I -B - "$HERE/d750d.py" 2>&1 <<'PY'
+unit=$(D750_LOG_DIR="$TMP/unit" python3 -I -B - "$TOP/d750d.py" 2>&1 <<'PY'
 import importlib.util, os, sys, time
 spec = importlib.util.spec_from_file_location("d750d", sys.argv[1]); d = importlib.util.module_from_spec(spec); spec.loader.exec_module(d)
 LOG = os.path.join(d.LOG_DIR, time.strftime("d750d-%Y-%m-%d.txt"))
@@ -175,7 +176,7 @@ check "d750d: after a quiet minute an error is logged in full again" "ok repeats
 # a daemon with no radio at all, on ports 4552 and 4553: 20 reads, how many failure lines in its log
 noradio() {  # noradio [VAR=VALUE]
   local dir="$TMP/noradio$#" pid; mkdir -p "$dir"
-  env "$@" D750_PORT="$TMP/no-radio" D750_PTT_PORT=4552 D750_CMD_PORT=4553 D750_LOG_DIR="$dir" python3 -I "$HERE/d750d.py" >/dev/null 2>&1 &
+  env "$@" D750_PORT="$TMP/no-radio" D750_PTT_PORT=4552 D750_CMD_PORT=4553 D750_LOG_DIR="$dir" python3 -I "$TOP/d750d.py" >/dev/null 2>&1 &
   pid=$!
   for _ in $(seq 1 50); do nc -z 127.0.0.1 4553 2>/dev/null && break; sleep 0.1; done
   { printf 'FQ 0\nBC\n%.0s' $(seq 1 10); printf 'quit\n'; } | nc -w 2 127.0.0.1 4553 >/dev/null

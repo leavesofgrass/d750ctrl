@@ -1,8 +1,9 @@
 """Output rules for d750: every line a verb prints, checked against the project's written rules.
 
-Run: python3 -I output-rules-test.py, with the test bed running first (./test-env.sh: the simulator and a
-second d750d on ports 4542 and 4543). It runs a fixed list of d750 verbs, using the d750 beside this file,
-never the one on the PATH, with a settings folder of its own, exactly as tests.sh does. It never keys:
+Run: python3 -I tests/output-rules-test.py, with the test bed running first (tests/test-env.sh: the
+simulator and a second d750d on ports 4542 and 4543). It runs a fixed list of d750 verbs, using the d750
+one folder up, never the one on the PATH, with a settings folder of its own, exactly as tests.sh does.
+It never keys:
 the only PTT word it sends is ptt off, VarAC frames only as dry runs, and it puts back every value it
 changes on the pretend radio. One line per verb run, Pass or Fail, then the count.
 Written Tuesday, November 17, 2026.
@@ -17,7 +18,8 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.realpath(__file__))
-D750 = os.path.join(HERE, "d750")
+TOP = os.path.dirname(HERE)
+D750 = os.path.join(TOP, "d750")
 HOST, PTT_PORT, CMD_PORT = "127.0.0.1", 4542, 4543
 LIMIT = 80
 # The project's words for a line that says something went wrong: d750's Fail: and usage:, the daemon's
@@ -262,7 +264,7 @@ def changer(reads, dry, real):
 
 def main():
     if not bed_running():
-        print("The test bed is not running on ports 4542 and 4543; start ./test-env.sh first.")
+        print("The test bed is not running on ports 4542 and 4543; start tests/test-env.sh first.")
         return 2
     tmp = tempfile.mkdtemp(prefix="d750-output-rules.")
     locked = False

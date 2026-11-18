@@ -1,6 +1,6 @@
 """Offline tests for aprschat: the history, line mode, and the screen under a pseudo terminal.
 
-Run: python3 -I aprschat-test.py. A stand-in for d750-aprs answers on a throwaway control socket and
+Run: python3 -I tests/aprschat-test.py. A stand-in for d750-aprs answers on a throwaway control socket and
 writes the history events the real one would. Nothing here opens the radio or transmits.
 """
 
@@ -20,10 +20,11 @@ import threading
 import time
 
 HERE = os.path.dirname(os.path.realpath(__file__))
+TOP = os.path.dirname(HERE)
 tmp = tempfile.mkdtemp(prefix="aprschat-test-")
 MSG, SOCK, STATE = (os.path.join(tmp, n) for n in ("messages.jsonl", "ctl.sock", "state.json"))
 os.environ.update(APRSCHAT_MESSAGES=MSG, APRSCHAT_SOCK=SOCK, APRSCHAT_STATE=STATE)
-spec = importlib.util.spec_from_file_location("aprschat", os.path.join(HERE, "aprschat.py"))
+spec = importlib.util.spec_from_file_location("aprschat", os.path.join(TOP, "aprschat.py"))
 chat = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(chat)
 
@@ -93,7 +94,7 @@ check("call signs", [chat.valid_call(x) for x in ("n0call-7", "N0CALL", "hello",
 
 # Line mode, as a screen reader would use it.
 env = dict(os.environ, HOME=tmp)
-p = subprocess.Popen([sys.executable, "-I", os.path.join(HERE, "aprschat.py"), "--line", "n0call-7"], env=env,
+p = subprocess.Popen([sys.executable, "-I", os.path.join(TOP, "aprschat.py"), "--line", "n0call-7"], env=env,
                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
 p.stdin.write("line mode test\n")
 p.stdin.flush()
@@ -109,7 +110,7 @@ check("line mode says the acknowledgement", "N0CALL-7 acknowledged: line mode te
 # The screen, in a pseudo terminal: F2 and a call sign, a typed line, Enter, F10.
 pid, fd = pty.fork()
 if pid == 0:
-    os.execvpe(sys.executable, [sys.executable, "-I", os.path.join(HERE, "aprschat.py")],
+    os.execvpe(sys.executable, [sys.executable, "-I", os.path.join(TOP, "aprschat.py")],
                dict(env, TERM="xterm", LINES="24", COLUMNS="100"))
 fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 100, 0, 0))
 screen = b""

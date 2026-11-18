@@ -1,6 +1,6 @@
 # The tests that need no radio and no sound device, on every push and pull request,
-# on four distributions. modes-test.sh and the rttymodem selftest stay local: they want
-# a sound server and the .venv.
+# on four distributions. tests/modes-test.sh and the rttymodem selftest stay local: they
+# want a sound server and the .venv.
 name: tests
 
 on:
@@ -57,30 +57,30 @@ jobs:
 
       - name: The verbs, against the simulator (tests.sh)
         run: |
-          ./test-env.sh > /dev/null 2>&1 &
+          tests/test-env.sh > /dev/null 2>&1 &
           for _ in $(seq 1 60); do nc -z 127.0.0.1 4543 2>/dev/null && break; sleep 0.25; done
-          rc=0; ./tests.sh || rc=$?
+          rc=0; tests/tests.sh || rc=$?
           kill $(cat "$HOME/.local/share/d750ctrl/log/test/pids") 2>/dev/null || true
           sleep 2
           exit $rc
 
       - name: What the verbs print, against written rules (output-rules-test.py)
         run: |
-          ./test-env.sh > /dev/null 2>&1 &
+          tests/test-env.sh > /dev/null 2>&1 &
           for _ in $(seq 1 60); do nc -z 127.0.0.1 4543 2>/dev/null && break; sleep 0.25; done
-          rc=0; python3 -I output-rules-test.py || rc=$?
+          rc=0; python3 -I tests/output-rules-test.py || rc=$?
           kill $(cat "$HOME/.local/share/d750ctrl/log/test/pids") 2>/dev/null || true
           sleep 2
           exit $rc
 
       - name: The rig screen, in a pseudo terminal (d750ctrl-test.py)
-        run: python3 d750ctrl-test.py
+        run: python3 tests/d750ctrl-test.py
 
       - name: APRS (d750-aprs-test.py)
-        run: python3 -I d750-aprs-test.py
+        run: python3 -I tests/d750-aprs-test.py
 
       - name: APRS chat (aprschat-test.py)
-        run: python3 -I aprschat-test.py
+        run: python3 -I tests/aprschat-test.py
 
       - name: The station tool, with fake services (station-test.py)
         run: python3 -I station/station-test.py

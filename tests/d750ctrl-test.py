@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""d750ctrl-test: drive d750ctrl under a pseudo terminal against the simulator (test-env.sh: ports 4542/4543),
+"""d750ctrl-test: drive d750ctrl under a pseudo terminal against the simulator (tests/test-env.sh: ports 4542/4543),
 press the keys, and check what the simulated radio ended up with and what the screen showed. Exit 0 on Pass.
 The screen reaches d750d through a counting relay here, so the test also checks how often it reads the radio."""
 import fcntl, os, pty, tempfile, re, select, socket, struct, subprocess, sys, termios, threading, time
 
 here = os.path.dirname(os.path.abspath(__file__))
+top = os.path.dirname(here)
 env_proc = subprocess.Popen(["sh", os.path.join(here, "test-env.sh")], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 time.sleep(3)
 
@@ -40,7 +41,7 @@ with open(os.path.join(conf_dir, "d750ctrl.conf"), "w", encoding="utf-8") as f:
 env = dict(os.environ, TERM="xterm", D750_CMD_PORT=str(relay()), D750_PTT_PORT="4542", D750_CONF_DIR=conf_dir)
 pid, fd = pty.fork()
 if pid == 0:
-    os.execvpe(sys.executable, [sys.executable, os.path.join(here, "d750ctrl"), "--ascii", "--theme", "mono", "--plain"], env)
+    os.execvpe(sys.executable, [sys.executable, os.path.join(top, "d750ctrl"), "--ascii", "--theme", "mono", "--plain"], env)
 fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
 screen = b""
 def pump(seconds):

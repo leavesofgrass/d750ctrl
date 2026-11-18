@@ -19,7 +19,7 @@ as one line. Routine reads on 4533 that the radio answers stay out of it, and th
 again is counted, one line a minute. D750_LOG_ALL=1 logs every exchange, as before November 11.
 Grown out of a keying shim on Saturday, November 7, 2026. Runs as the user service d750d.service.
 Environment: D750_PORT (device), D750_PTT_PORT, D750_CMD_PORT, D750_LOG_DIR, D750_BAUD, so a
-second instance can run against the simulator (d750-sim.py) without touching the real one.
+second instance can run against the simulator (tests/d750-sim.py) without touching the real one.
 """
 import os
 import re

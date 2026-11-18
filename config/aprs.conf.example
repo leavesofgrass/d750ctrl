@@ -2,7 +2,7 @@
 
 # Your call sign with the SSID this station beacons as.
 call = N0CALL-2
-# The TNC's serial port, from udev/60-d750ctrl.rules. KISS comes out here with radio menu 983 on
+# The TNC's serial port, from config/60-d750ctrl.rules. KISS comes out here with radio menu 983 on
 # USB (Main Unit) and the TNC in KISS mode.
 tnc = /dev/d750-tnc
 # The port's DTR and RTS lines: raised or low.

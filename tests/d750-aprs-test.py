@@ -1,6 +1,6 @@
 """Offline tests for d750-aprs: KISS, AX.25, APRS parsing and the plain lines.
 
-Run: python3 -I d750-aprs-test.py. Nothing here opens a port or transmits.
+Run: python3 -I tests/d750-aprs-test.py. Nothing here opens a port or transmits.
 """
 
 import importlib.util
@@ -10,7 +10,8 @@ import sys
 import time
 
 HERE = os.path.dirname(os.path.realpath(__file__))
-spec = importlib.util.spec_from_file_location("aprs", os.path.join(HERE, "d750-aprs.py"))
+TOP = os.path.dirname(HERE)
+spec = importlib.util.spec_from_file_location("aprs", os.path.join(TOP, "d750-aprs.py"))
 aprs = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(aprs)
 
@@ -456,7 +457,7 @@ def good_news():
 
 
 def no_transmit_claim():
-    src = open(os.path.join(HERE, "d750-aprs.py"), encoding="utf-8").read()
+    src = open(os.path.join(TOP, "d750-aprs.py"), encoding="utf-8").read()
     for words in ("is not transmitting", "power cycled by the station computer", "Power cycle the radio", "Power cycle it by hand",
                   "sending again", "_not_sending"):
         check(f"gone from d750-aprs: {words}", words in src, False)

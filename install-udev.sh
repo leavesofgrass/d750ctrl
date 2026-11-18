@@ -6,7 +6,7 @@ set -u
 user=${SUDO_USER:-${1:-}}
 [ -n "$user" ] || { echo "usage: sudo ./install-udev.sh [USER]"; exit 2; }
 here=$(dirname "$(readlink -f "$0")")
-sed "s/@USER@/$user/" "$here/udev/60-d750ctrl.rules" > /etc/udev/rules.d/60-d750ctrl.rules
+sed "s/@USER@/$user/" "$here/config/60-d750ctrl.rules" > /etc/udev/rules.d/60-d750ctrl.rules
 udevadm control --reload
 udevadm trigger --subsystem-match=tty --action=add
 sleep 1
