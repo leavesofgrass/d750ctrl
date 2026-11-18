@@ -37,7 +37,7 @@ MAX_KEY_SECONDS = 30.0
 LOG_DIR = os.path.expanduser(os.environ.get("D750_LOG_DIR", "~/.local/share/d750ctrl/log"))
 BAUD = int(os.environ.get("D750_BAUD", "9600"))
 DAEMON_WORDS = ("state", "lock", "unlock", "reconnect", "quit")
-VERSION = "0.1.0"
+VERSION = "0.2.0-alpha.1"
 # hamlib's bit values from rig.h: modes, levels. Kenwood MD codes as the TM-D750 accepts them (0 FM, 1 NFM, 2 AM, 3 DV).
 HL_MODES = {"FM": (0, 1 << 5, 15000), "FMN": (1, 1 << 21, 8000), "AM": (2, 1 << 0, 8000), "DSTAR": (3, 1 << 24, 6250)}
 MODE_NAME = {code: name for name, (code, _, _) in HL_MODES.items()}
