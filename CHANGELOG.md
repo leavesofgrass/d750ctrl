@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+- License: GNU General Public License, version 2 or later, from this change on. Version 0.1.0 and everything
+  published before it stays available under the MIT license.
+- Documentation: a short README with a quick start, and a docs folder with a page for each tool, a settings
+  reference, radio setup, a glossary, recipes, troubleshooting, a page on what has and has not been tested, and a
+  reference to the radio as a computer sees it. "Try it without a radio" runs the tools against the pretend radio.
+- Fixed: `d750-sstv tx` and `d750-rtty tx` keyed the radio and unkeyed it a few milliseconds later. The keyer
+  closed its connection after keying, and d750d unkeys when a keying client disconnects. The keyer now holds one
+  connection for the whole transmission. Checked against the pretend radio; not yet proven on the air.
+- Fixed: `d750 raw`, `d750 tnc off` and `d750 tnc aprs` exited 1 on success, and `d750 vara status` did with no
+  log yet. `d750 ptt off` now exits 1 when the radio does not confirm the unkey, and `d750 level` when it
+  recorded nothing.
+- `d750 help` is one verb per line, each line 80 characters or fewer, for speech and Braille. `d750 vox on` and
+  `d750 vox off` answer `VOX: on` and `VOX: off`. `d750 doctor` shows the radio's firmware and type. The note
+  after `d750 tnc kiss` names the TNC's USB port and no longer says Bluetooth.
+- A new test, output-rules-test.py, holds what the verbs print to written rules: plain text, line length, exit
+  codes, failures that say so, the answer first, on and off, and dry runs that change nothing.
+- install.sh links d750-power, writes the d750-aprs service without starting it, and writes aprs.conf, owner only,
+  when it is missing.
+- Station tools, in station/, with an installer of their own: `station` (raise and lower services, from a
+  settings file), `notify` (ntfy notices, token in a settings file), `radiogram`, `d750d-kuma`, `xara-wait-audio`,
+  `xara-radio-pair` and `mode-listen`. Two new tests cover `station` and `notify`.
+- extras/d750-ptt.py: the first keying program, kept for reference. Never run it beside d750d.
+- The tests run on Ubuntu, Debian, Fedora and Arch on GitHub.
+- The comment in the udev rule file named the two sockets the wrong way round; the rules were right.
+- `d750 probe` no longer sends BE, and d750d refuses it on the command port. Another project reports that BE sends
+  an APRS beacon when the TNC is in APRS mode with the manual beacon method, so a read-only probe must not send it.
 - Restart notices say only what is known. The "not transmitting" alert went out after nearly every restart,
   true or not, because an iGate here carries the beacon only now and then. Now each restart gives one
   notice with the day's count and the time since the last one, kept in aprs.json; two drops within 2

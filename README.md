@@ -1,208 +1,116 @@
 # d750ctrl
 
-Keyboard control of the Kenwood TM-D750 from a Linux box, over the radio's own USB serial port. One small
-daemon owns the port; a command with plain verbs, a full screen rig control, and tools for VARA chat, NTS
-radiograms, SSTV and RTTY sit on top of it. Python 3 and bash, nothing else to install for the core.
+d750ctrl is keyboard control of the Kenwood TM-D750 mobile radio from a Linux computer, over the
+radio's own USB serial port. It is for radio amateurs who want to tune, watch and configure the
+radio from a terminal, and who may use a screen reader or a Braille display to do it. Every command
+prints short plain lines with the answer first, and nothing needs a mouse.
 
-Written for a station where the computer is driven by keyboard and screen reader as much as by eye: every
-verb prints one short line per fact, the answer first; the screen is for operators who want the dials.
+**This project is experimental.** It is one operator's working station software, shared as it is.
+Commands, settings and output can change between versions.
 
-## Getting started
+**It controls a real transmitter.** Some commands key the radio, and the APRS service can transmit
+by itself once you turn transmitting on. You are responsible for every transmission and for your
+license conditions. Start with the dry runs and with
+[Try it without a radio](docs/try-without-a-radio.md).
+[What has been tested](docs/what-has-been-tested.md) says how far each part has been proven. There
+is no warranty; see the license.
 
-    git clone https://github.com/leavesofgrass/d750ctrl ~/d750ctrl
-    cd ~/d750ctrl
-    ./install.sh YOURCALL          # links the commands, starts the daemon, makes the Python environment
-    sudo ./install-udev.sh         # once: gives you the radio's serial port as /dev/d750-cat
-    d750 doctor                    # every check in one list, Pass or Fail per line
-    d750 status                    # both bands, transmit band, TNC, squelch, power
-    d750ctrl                       # the screen
+## What you need
 
-The radio's base unit USB-C socket is the serial port the daemon uses. The control head's socket carries the
-sound card for digital modes, and it is also a charger, so put a data-only adapter or a powered hub between it
-and the computer. Both sockets may be connected at once; the udev rule names them apart.
+- A Kenwood TM-D750 and a USB-C cable to its control head.
+- A Linux computer with systemd user services. The owner uses CachyOS.
+- Python 3 with the pyserial module, bash, and git.
+- Optional: tmux, for the rig screen's windows. A sound server with the pactl, parecord and paplay
+  commands, for SSTV, RTTY and the level checks.
 
-## The pieces
+The full list, with a check for each item, is in [Install](docs/install.md).
 
-- d750d: the only process that opens the serial port. Port 4532 speaks hamlib's NET rigctl protocol, so xara,
-  WSJT-X, fldigi, GridTracker, OpenSlot or any other Hamlib-aware program tunes and keys the radio through it:
-  pick the rig "NET rigctl" and the address 127.0.0.1:4532. VFOA is band A, VFOB band B and the current VFO the
-  band that transmits; modes FM, FMN, AM and DSTAR; levels STRENGTH, RAWSTR, RFPOWER and SQL. Port 4533 takes one
-  Kenwood command per line and returns the answer. It refuses commands that key or reset the radio on 4533, unkeys on client loss and after 30 seconds,
-  and logs keying, sets, refusals, errors and bytes the radio sends unasked under ~/.local/share/d750ctrl/log.
-  Reads the radio answers stay out of the log; the same error again is logged once, then counted one line a
-  minute. D750_LOG_ALL=1 logs every exchange.
-- d750: the verbs. status, freq, band, mode, squelch, power, busy, watch, tnc, vara, fixup, mem, gps, vox,
-  clock, level, record, ptt off, doctor, probe, log, lock, unlock, raw. Add -n for a dry run of anything that
-  changes the radio. Exit 0 Pass, 1 Fail, 2 usage. `d750 vara cq` and `d750 vara beacon` send one VarAC CQ
-  frame or beacon frame through xara with the call from the settings, the way VarAC stations expect them.
-- d750ctrl: the screen. Both bands, the active band in big digits, tuning by step or typed frequency, squelch,
-  power, mode, VFO or memory, a memory browser read from the radio, TNC, GPS output, PTT lock, unkey, one
-  VarAC CQ or beacon frame through xara, the radio clock, raw CAT, a scrolling CAT log; x, o, r, S and R open
-  xarachat, VarAC chat, radiogram, SSTV and RTTY in windows of their own (see Jumping between modes).
-- d750-sstv and d750-rtty: send and receive through the radio's sound card, keyed through d750d, with xara
-  paused meanwhile. SSTV uses the sstv Python package; RTTY uses rttymodem.py, a Baudot modem written here.
-- d750-aprs: APRS through the radio's own TNC in KISS mode, on the base unit's USB port (/dev/d750-tnc). A
-  user service reads every packet and says it as one plain line in ~/.local/share/d750ctrl/log/aprs-DATE.txt:
-  the call first, then distance and direction from home, speed, status or comment, and whether it was heard
-  direct or through a digipeater. "Our beacon, repeated via W7DEN-3" confirms the home beacon reached a digi.
-  It beacons the home position on a timer, sends APRS messages with retries until acknowledged, acknowledges
-  messages to us, and shares the TNC on KISS TCP port 8001 for YAAC, Xastir, APRSIS32 or Pat. Nothing transmits
-  until `d750-aprs transmit on`; with it off, beacons, messages, acknowledgements and frames from KISS programs
-  are held back. `d750-aprs listen` follows the packets, `d750-aprs last 20 TEXT` reads today's back, and
-  `d750-aprs send CALL TEXT` sends a message. Settings: ~/.config/d750ctrl/aprs.conf, from aprs.conf.example.
-  As a receive-only iGate, `d750-aprs igate on` passes what the radio hears to APRS-IS, marked qAR with this
-  station's call. It skips packets marked NOGATE, RFONLY, TCPIP or TCPXX, queries, third-party packets and
-  repeats within 30 seconds, and never transmits anything from the internet. It needs the APRS-IS passcode in
-  aprsis_pass. After each beacon it watches APRS-IS for 60 seconds and says which iGate carried it, and with
-  aprsis_beacon = fallback, the default, sends it there directly when none did. The settings file holds the
-  position and passcode and stays readable by its owner only.
-  As an APRS digipeater, `d750-aprs digi fillin` repeats packets whose next hop is WIDE1-1, our call or one
-  of digi_aliases; `d750-aprs digi wide` also repeats WIDEn-N up to digi_max_hops (2), putting our call in
-  the path and taking one off N. It repeats only APRS packets, never one it has repeated or heard in the
-  last 30 seconds, never our own, never with transmitting off, and at most 20 a minute. digi_viscous
-  waits that many seconds before a fill-in repeat and drops it if another digipeater repeats it first.
-  A home station is usually a fill-in digipeater; ask the local APRS group before running wide.
-  Watching it: when ~/.config/kuma-push-url-aprs-tnc, -igate, -heard and -beacon exist (Uptime Kuma push
-  URLs), d750-aprs pushes every 5 minutes while it holds the TNC and while the iGate is logged in, when it
-  hears a packet, and when an iGate carries its beacon. With notify = on it posts through the notify
-  command: APRS messages for this station to the notify_topic (aprs), a message that failed after 5 tries,
-  and the restart notices below to the alerts topic. A quick port check on 8001 is not logged.
-- The radio switched off, at night for one, is a normal state: both its USB devices are gone. d750-aprs then
-  keeps its Kuma monitors (TNC, heard, beacon) up with "radio off since HH:MM" instead of letting them go
-  down, and sends no alert. Only a return within 3 minutes counts as a restart.
-- After a restart, d750-aprs says only what it knows. It has no sure sign that the radio transmits, so it
-  claims nothing about that. On ntfy alerts:
-  - "TM-D750 restarted, 11:39", priority 3: "Restart 6 today. 3 h 4 min after the last one. TNC reset
-    follows." The day's count and the last restart's time are kept in aprs.json. Two drops within 2
-    minutes are one restart and one notice.
-  - "TM-D750 hearing again, 11:52", priority 2, for the first packet the TNC hears: "First packet 13 min
-    after the 11:39 restart."
-  - "TM-D750 has heard nothing since 11:39", priority 4, when nothing is heard for deaf_minutes (90; 0 turns
-    it off): "90 min since it restarted. Check the radio." Once a restart; not with the radio switched off.
-  - "TM-D750 beacon carried by NAME, 11:42", priority 2, the first time an iGate carries the beacon after a
-    restart.
-- After every return, switched on or restarted, d750-aprs resets the TNC 2 minutes later (TN 0,1, TN 2,1
-  and the KISS settings) without waiting for any test. d750d reopens its port up to about 45 seconds after
-  the radio is back, so if the radio does not confirm the reset it tries once more a minute later, and says
-  in the log whether it was confirmed. Then, with restart_check = on, one check beacon. An iGate carrying
-  it is good news; none carrying it is usual at this station and is one line in the log, never an alarm, a
-  reset or a power cycle.
-- power_cycle_cmd is kept for a real transmit check that does not exist yet; nothing runs it now.
-  `d750-power status`, `cycle 10`, `on` and `id` drive relay/d750-relay/d750-relay.ino on the LattePanda's
-  Leonardo: a relay whose normally closed contact carries the radio's 13.8 V, so a failure anywhere leaves
-  the radio powered.
-- The status message: status in aprs.conf goes out every 6 hours (status_interval, minutes), on the air and
-  straight to APRS-IS, so aprs.fi shows what the station is. `d750-aprs announce` sends it now.
-- aprschat: APRS messages from the terminal, over SSH or at the console, through d750-aprs. The screen works
-  like xarachat's: the top line says who you are talking with, the conversation is in the middle, and you type
-  on the bottom line, where the cursor stays. Enter sends; F2 talks to another station, F3 lists the
-  conversations, F4 goes to unread ones, F1 helps, F10 quits, Page Up and Page Down scroll. Each of our lines
-  says what became of it: waiting, sent and which try, acknowledged, refused, or not acknowledged after 5
-  tries. `aprschat --line CALL` prints one event per line for a screen reader, with /to CALL, /list and
-  /quit. Messages longer than 67 characters go in parts. d750-aprs keeps every message event in
-  ~/.local/share/d750ctrl/log/messages.jsonl, and with the iGate on it also takes messages for this station
-  sent through the internet, from aprs.fi for one, and acknowledges those the same way. 18 checks in
-  aprschat-test.py, one of them driving the screen in a pseudo terminal.
-- probe.py: asks the radio, read only, which commands it answers and writes the table the verbs rely on.
-- d750-sim.py, test-env.sh, tests.sh, d750ctrl-test.py, modes-test.sh: a pretend radio on a pseudo terminal
-  and the tests that run against it, so nothing here needs a radio to be proven.
+## Quick start
 
-## Jumping between modes
+```sh
+git clone https://github.com/leavesofgrass/d750ctrl ~/d750ctrl
+cd ~/d750ctrl
+./install.sh YOURCALL
+sudo ./install-udev.sh
+d750 doctor
+d750 status
+```
 
-When tmux is installed, d750ctrl starts itself inside tmux, on a tmux server of its own, so your other tmux
-sessions are untouched. The rig screen is window 0, named rig. x opens xarachat in a window named chat, o
-VarAC chat in a window named varac: xarachat with VarAC's framing on (`xarachat --tui --varac yes`), or
-openslot's terminal client when the settings say `varac = openslot`. xara takes one client, so x and o share
-one xarachat: the other letter jumps to the window that is open and names the `/varac on` or `/varac off`
-command that switches it. r opens a radiogram, S and R the SSTV and RTTY tools. Each keeps running while you
-tune, so a chat link stays up. F9 brings the rig screen back from
-anywhere, F12 steps through the open windows, and the same letter jumps to a window that is already open
-instead of starting a second copy. The rig screen's message line and the bottom tmux line list the open
-windows. A tool's own quit key (F10 in xarachat, Ctrl-Q in openslot) closes its window, and q on the rig
-screen asks whether to close the other windows too. Change the keys with rig_key and next_key in the settings
-file. d750ctrl --plain, or workspace = no, gives the old way: a tool takes over the terminal and hands it
-back when it ends. The tmux prefix, Ctrl-b, works as usual.
+Replace YOURCALL with your call sign. `install.sh` needs no root. `install-udev.sh` is the one step
+that does. `d750 doctor` prints one line per check, each starting with Pass or Fail. `d750 status`
+prints both bands, the transmit band, the TNC and the daemon.
 
-## Settings
+When it works, `d750 status` answers with four lines. This is what the pretend radio prints, so
+yours will show your own numbers:
 
-~/.config/d750ctrl/d750ctrl.conf, written by install.sh from d750ctrl.conf.example:
+```text
+band A: 147.040 MHz, FM, squelch 6, busy, power high
+band B: 144.390 MHz, FM, squelch 3, quiet, power mid, transmits, control
+tnc: KISS on band B
+daemon: port open /dev/pts/0; not keyed; unlocked; last answer 18:48:19; unsolicited bytes seen 0
+```
 
-    mycall = N0CALL        your call, for the CQ and beacon frames
-    varac = xarachat       what o opens for VarAC chat: xarachat with VarAC on, or openslot
-    bluetooth =            the radio's Bluetooth address, for the pairing checks; empty if unpaired
-    ptt_port = 4532
-    cmd_port = 4533
-    status_seconds = 2     the rig screen reads everything this often
-    busy_seconds = 1       the busy flags of both bands this often; 0 reads them with the rest
-    workspace = yes        tmux windows for the tools; no runs everything in one terminal
-    rig_key = F9           back to the rig screen from any window
-    next_key = F12         step to the next window
+No radio yet? [Try it without a radio](docs/try-without-a-radio.md) runs a pretend one.
 
-d750 fixup keeps its own file there, fixup.conf, with the TNC mode and band, the data band squelch and the GPS
-output state it puts back after a power cycle. The probe's table is commands.txt beside them. Nothing about
-your station is in this repository.
+The cabling is in [Quick start](docs/quickstart.md) and [Radio setup](docs/radio-setup.md).
 
-## The radio, as learned
+## Your first five minutes
 
-The TM-D750 speaks the TH-D74 command dialect over USB: FQ, MD, SQ, BY, BC, PC, VM, MR, ME, FO, TN, GP, RT,
-VX and more; d750 probe lists what your firmware answers. Three rules learned the hard way:
+1. Run `d750 doctor`. Read each Fail line. [Troubleshooting](docs/troubleshooting.md) explains them.
+2. Run `d750 status` to read both bands.
+3. Change a frequency with a dry run first: `d750 freq A 146.520 -n` shows what would be sent and
+   changes nothing. Run it again without `-n` to do it.
+4. Watch a band for activity: `d750 watch B 30` prints a line only when the squelch opens or closes.
+5. Run `d750ctrl` to open the rig screen. Press the question mark for help, and leave it open while
+   you listen. Press the letter q to quit.
 
-- The CAT port must carry only CAT. Menu 403 Off, or d750 gps output off; GPS sentences on the port slow every
-  command to seconds.
-- Never run the TNC with the data band's squelch wide open while menu 508 is on Busy: the TNC will not transmit.
-- Keep transmitting handhelds away from the USB leads; a bus reset takes the radio and everything else on it.
-- After the radio restarts by itself, its TNC may take commands but send nothing until the KISS settings are
-  set again (TX delay, persistence, slot time). On November 11, 2026 a power cycle did not clear that;
-  sending those settings did. d750-aprs sends them every time it connects to the TNC, and resets the TNC
-  (TN 0,1 then TN 2,1, with the settings again) after every return of its port.
-- On November 11, 2026 the radio restarted while receiving a long frame and came back receiving but not
-  transmitting, with nothing on its display to say so, until it was switched off and on. d750-aprs cannot
-  tell that from here: an iGate carries this station's beacon only now and then, so a beacon nobody carried
-  proves nothing. It says when the radio restarts and whether it hears again, and leaves transmitting to
-  a real check.
-- BC's second field is not the PTT band: it read 1 while the PTT stayed on band A, and it changed to 1
-  the moment the TNC transmitted on band B. d750d still takes it as the transmit band.
+## The tools
 
-The radio shows two USB serial ports. The control head's (USB id 2166:9030, with the sound card) is the CAT
-port, /dev/d750-cat. The base unit's (2166:9032) is /dev/d750-tnc. The layout that works, found November 11,
-2026: menu 983 on USB (Main Unit) and menu 984 on USB (Panel).
+- [d750d](docs/d750d.md): the daemon that alone opens the serial port and speaks hamlib to other
+  programs.
+- [d750](docs/d750.md): the command with plain verbs: status, freq, mode, squelch, power, mem and
+  more.
+- [d750ctrl](docs/d750ctrl.md): the full-screen rig control.
+- [d750-aprs](docs/aprs.md): APRS through the radio's own TNC, including iGate and digipeater.
+- [aprschat](docs/aprschat.md): APRS messages from the terminal, with a line mode for screen
+  readers.
+- [d750-sstv and d750-rtty](docs/sstv-and-rtty.md): pictures and text through the radio's sound
+  card.
+- [VARA and chat](docs/vara-and-chat.md): VarAC frames through xara, and the chat windows.
+- [radiogram](docs/radiogram.md): write, check and log NTS radiograms.
+- [d750-power](docs/power-relay.md): a fail-safe relay that can power cycle the radio.
+- [Station tools](docs/station-tools.md): the owner's other small tools for running the station
+  computer.
 
-- TNC in KISS mode (TN 2,1): KISS frames arrive on the base unit's port, /dev/d750-tnc, and CAT keeps answering
-  on the control head's port. This is what d750-aprs uses.
-- TNC in APRS mode (TN 1,1): each decoded packet arrives as one text line, CALL>DEST,PATH:INFO, on the control
-  head's port beside the CAT answers. d750d logs each as one line, APRS packet on the CAT port, and drops it.
-- With menu 984 on USB (Main Unit) and the TNC in KISS mode, CAT moved to the base unit's port and the control
-  head's port stopped answering.
+## Learn more
 
-d750-aprs opens the TNC port with DTR and RTS raised; tnc_lines = low in its settings holds them low. In KISS
-mode the radio's own APRS screen is off, so `d750 fixup` keeps TNC=2,1.
+- [Documentation index](docs/README.md): every page, grouped.
+- [Recipes](docs/recipes.md): short how-tos for common tasks.
+- [Screen readers and Braille](docs/screen-readers.md): how the tools are built for them.
+- [Radio notes](docs/radio-notes.md): hard-won facts about the TM-D750.
+- [Settings](docs/settings.md), [Testing](docs/testing.md) and the [Glossary](docs/glossary.md).
 
-The TNC decodes far fewer packets than the squelch opens for: most distant bursts never decode, while a
-station nearby decodes every time. To tell "not decoding" from "not reaching the computer", put the TNC in APRS
-mode with menu 570 RX Beep on All: the radio beeps for each packet it decodes. Listen for many minutes; the
-channel can be quiet for a long while. The data band's volume can stay all the way down: the TNC
-decodes with the speaker silent (tested November 11, 2026), but the squelch must still open.
+## Tested on
 
-Modes over MD are 0 FM, 1 NFM, 2 AM and 3 DV; the radio refuses anything above 3, so DR is not reachable this way.
-
-Hamlib's TH-D74 model talks to this radio but takes seconds to unkey, which is why d750d keys with the raw
-TX and RX commands and offers hamlib's protocol on its own port instead.
-
-## Tests
-
-    ./test-env.sh &                 the simulator and a second daemon on ports 4542 and 4543
-    ./tests.sh                      the verbs, 78 checks
-    python3 d750ctrl-test.py        the screen under a pseudo terminal, 22 checks
-    ./modes-test.sh                 RTTY and SSTV round trips over a virtual sink
-    .venv/bin/python rttymodem.py selftest
-    python3 -I d750-aprs-test.py    KISS, AX.25, APRS positions, Mic-E, messages, the plain lines and the
-                                    restart notices, 182 checks
-    python3 -I aprschat-test.py     the chat, in line mode and on its screen, 18 checks
-
-The test daemon wants pyserial; tests.sh wants d750 on the path, plus nc and hamlib's rigctl.
-The four that need no sound device (tests.sh, d750ctrl-test.py, d750-aprs-test.py and aprschat-test.py)
-also run on GitHub on every push and pull request: .github/workflows/tests.yml.
+The tools are used with a real radio on CachyOS, an Arch Linux relative, daily with a screen reader
+and a Braille display. The automated tests run against the pretend radio on Ubuntu, Debian, Fedora
+and Arch. Debian and Fedora have not been tried with a real radio. Other distributions may need
+adjusting; see [Install](docs/install.md).
+To see what firmware your own radio reports, run `d750 doctor`.
 
 ## License
 
-MIT, see LICENSE.
+Copyright (c) 2026 Jon, KD7SWH.
+
+d750ctrl is free software: you can redistribute it and modify it under the terms of the GNU General
+Public License as published by the Free Software Foundation, either version 2 of the License, or (at
+your option) any later version. It is distributed in the hope that it will be useful, but without
+any warranty, without even the implied warranty of merchantability or fitness for a particular
+purpose. The full text is in [LICENSE](LICENSE).
+
+Version 0.1.0 and everything published before this change was released under the MIT license, and
+stays available under it.
+
+Some facts about the radio in these pages were first reported by the
+[kenwood project](https://github.com/swiftraccoon/kenwood), which is also under the GNU General
+Public License, version 2 or later. Each such fact is marked where it appears.
