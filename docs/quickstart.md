@@ -108,6 +108,26 @@ near the bottom, and a message line below it. Press the question mark for help a
 quit. If tmux is installed, the screen opens inside its own tmux session, and the bottom line lists
 the tool windows you open. Details are on the [d750ctrl](d750ctrl.md) page.
 
+## Your first five minutes
+
+With the radio answering, try these in order. None of them transmits.
+
+1. Change a frequency with a dry run first. `-n` shows what would be sent and changes nothing:
+
+   ```sh
+   d750 freq A 146.520 -n
+   ```
+
+   Run it again without `-n` to do it.
+2. Watch a band for activity. This prints a line only when the squelch opens or closes:
+
+   ```sh
+   d750 watch B 30
+   ```
+
+3. Open the rig screen with `d750ctrl`, and leave it open while you listen.
+4. Read `d750 help` for every verb. [Recipes](recipes.md) has short how-tos.
+
 ## If it did not work
 
 - Start with `d750 doctor`, then `d750 log`. Both are described on the

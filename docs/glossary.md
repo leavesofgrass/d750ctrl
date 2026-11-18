@@ -100,10 +100,13 @@ not encyclopedia entries.
 
 ## V
 
-- VARA: A family of modems for amateur data links on HF and FM. In this project the `d750 vara`
-  verbs work through xara, and the rig screen can open a chat window for it.
-- VarAC: A chat program for VARA. Its CQ and beacon frames have a particular format. `d750 vara cq`
-  and `d750 vara beacon` send one in that form through xara, with your call from the settings.
+- VARA: A family of proprietary modems for amateur data links on HF and FM. VARA is not free
+  software, it is not part of this project, and this project neither endorses it nor is endorsed by
+  it. In this project the `d750 vara` verbs work through xara, a separate program that speaks a
+  compatible protocol, and the rig screen can open a chat window for it.
+- VarAC: A chat program for VARA, by its own authors and not connected with this project. Its CQ
+  and beacon frames have a particular format. `d750 vara cq` and `d750 vara beacon` send one in that
+  form through xara, with your call from the settings.
 
 ## X
 

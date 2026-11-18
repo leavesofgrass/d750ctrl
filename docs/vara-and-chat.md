@@ -12,6 +12,21 @@ other terms.)
 xara itself, and any chat program, are not part of this project. xara has its own documentation and
 settings file.
 
+## About VARA, VarAC and this project
+
+VARA is proprietary software. It is not free software, and it is not part of this project.
+d750ctrl does not include VARA and does not need it. This project does not endorse VARA, and it is
+not endorsed by VARA or by its author.
+
+The `d750 vara` verbs talk to xara. xara is a separate program, written independently, that speaks
+a protocol compatible with VARA's. It is not VARA, and it has its own license.
+
+VarAC is a separate chat program by its own authors. This project only sends frames in the form
+that VarAC stations expect. It is not connected with VarAC and is not endorsed by it.
+
+The names VARA and VarAC belong to their owners. They are used here only to say what these tools
+can talk to.
+
 ## Before you start
 
 - xara is installed and set up on your computer, running as the systemd user service `xara.service`,

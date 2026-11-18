@@ -4,6 +4,10 @@
 
 - The rig screen, the RTTY modem and radiogram still said MIT in their own headers and help text. They now say
   GPL-2.0-or-later, as the project does. The README's License section no longer mentions the old license.
+- The README and the docs say plainly that VARA is proprietary and not free software, that none of it is
+  included, and that this project neither endorses VARA, VarAC or Kenwood nor is endorsed by them.
+- The README is much shorter. What left it is in the docs: the first five minutes are on the quick start
+  page, and the license, the names and the thanks are on a page of their own.
 
 ## 0.2.0-alpha.1, Tuesday, November 17, 2026
 
