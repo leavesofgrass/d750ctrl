@@ -3,7 +3,7 @@
 
 Writes ~/.config/d750ctrl/commands.txt: one line per command tried, with the answer, the meaning the
 community list gives for the TH-D74, and the date. Commands that act (TX, RX, UP, DW, SR,
-PS, 0M, 0G) are listed but never sent; the daemon refuses them too.
+PS, 0M, 0G, and BE, which can send an APRS beacon) are listed but never sent; the daemon refuses them too.
 Usage: probe.py            run and write the table
        probe.py --show     print the last table
 Written Saturday, November 7, 2026."""
@@ -18,7 +18,7 @@ MEANINGS = {
     "ID": ("radio model", []), "FV": ("firmware version", []), "TY": ("radio type", []),
     "AE": ("serial number and model", []), "AI": ("auto information on changes", []),
     "AS": ("TNC baud rate", ["0", "1"]), "BC": ("control band and transmit band", []),
-    "BE": ("APRS beacon", []), "BL": ("battery level", []), "BS": ("bar antenna", []),
+    "BL": ("battery level", []), "BS": ("bar antenna", []),
     "BT": ("Bluetooth", []), "BY": ("squelch open or closed, per band", ["0", "1"]),
     "CS": ("callsign", []), "DC": ("D-STAR slot, callsign, message", ["0", "1"]),
     "DL": ("dual or single band", []), "DS": ("D-STAR callsign slot", []),
@@ -35,7 +35,8 @@ MEANINGS = {
     "VX": ("VOX on or off", []),
 }
 NEVER = {"TX": "key the transmitter", "RX": "unkey", "UP": "microphone up key", "DW": "microphone down key",
-         "SR": "reset the radio", "PS": "power off", "0M": "programming mode", "0G": "service mode"}
+         "SR": "reset the radio", "PS": "power off", "0M": "programming mode", "0G": "service mode",
+         "BE": "send an APRS beacon"}
 
 
 def ask(sock_file, line):

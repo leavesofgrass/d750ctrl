@@ -1,20 +1,49 @@
 #!/bin/bash
-# d750: control and configure the Kenwood TM-D750 through d750d. Plain lines, the answer first.
+# d750: control and configure the Kenwood TM-D750 through d750d.
+# Plain lines, the answer first.
 # Verbs:
-#   status                      both bands, transmit band, TNC, squelch, power, daemon state
-#   freq A|B MHZ                set a band's frequency        band A|B            control and transmit band
-#   mode A|B fm|nfm|am|dv       set a band's mode             squelch A|B 0-9     squelch level
-#   power A|B high|mid|low|el   output power                  busy A|B            squelch open or closed now
-#   watch A|B [SECONDS]         busy once a second            tnc off|aprs|kiss [A|B]   TNC mode by command
-#   vara fm|hf|off|status|cq|beacon   xara's mode, state, one VarAC CQ or beacon frame   fixup   put back what the box relies on
-#   mem list [FROM TO]          memory channels               mem show N          one channel, field by field
-#   mem goto A|B N              recall a channel              mem export FILE [FROM TO] | mem import FILE
-#   gps [output off|on]         GPS and its PC output         vox [on|off]        VOX state
-#   clock [set]                 radio clock, set from this computer level [SECONDS]     receive level, dBFS
-#   record SECONDS FILE [rx|tx] record the data path to wav   ptt off             unkey now
-#   doctor                      the health checklist          probe               which commands the radio answers
-#   lock | unlock | state | raw CMD [ARGS] | log [N|follow] | help
-# Add -n anywhere for a dry run of a verb that changes the radio. Exit 0 Pass, 1 Fail, 2 usage.
+# Looking:
+#   status: both bands, transmit band, TNC, squelch, power, daemon state
+#   busy A|B: squelch open or closed now
+#   watch A|B [SECONDS]: busy once a second, a line only when it changes
+# Tuning:
+#   freq A|B MHZ: set a band's frequency
+#   band A|B: control and transmit band
+#   mode A|B fm|nfm|am|dv: set a band's mode
+#   squelch A|B 0-9: squelch level
+#   power A|B high|mid|low|el: output power
+# Memories:
+#   mem list [FROM TO]: memory channels
+#   mem show N: one channel, field by field
+#   mem goto A|B N: recall a channel
+#   mem export FILE [FROM TO]: save channels to a file, raw ME lines
+#   mem import FILE: write a file from mem export back to the radio
+# GPS, VOX and clock:
+#   gps [output off|on]: GPS and its PC output
+#   vox [on|off]: VOX state
+#   clock [set]: radio clock, set from this computer
+# Sound card:
+#   level [SECONDS]: receive level, dBFS
+#   record SECONDS FILE [rx|tx]: record the data path to wav
+# TNC and VARA:
+#   tnc off|aprs|kiss [A|B]: TNC mode by command
+#   vara fm|hf: set xara's mode and restart xara
+#   vara off|status: stop xara, or show its state
+#   vara cq|beacon: one VarAC CQ or beacon frame through xara; this transmits
+# Transmitting and safety:
+#   ptt off: unkey now
+#   lock: unkey, then refuse PTT until unlock
+#   unlock: allow PTT again
+# Health and logs:
+#   doctor: the health checklist
+#   probe: which commands the radio answers
+#   fixup: put back what the box relies on
+#   state: the daemon's state, one line
+#   log [N|follow]: today's daemon log, the last N lines (20), or follow it
+#   raw CMD [ARGS]: one Kenwood command and the radio's answer; keying refused
+#   help: this text
+# Add -n anywhere for a dry run of a verb that changes the radio.
+# Exit 0 Pass, 1 Fail, 2 usage.
 # Settings: ~/.config/d750ctrl/d750ctrl.conf (mycall, bluetooth, cmd_port, ptt_port); D750_CMD_PORT and D750_PTT_PORT override,
 #   D750_CONF_DIR points at another settings folder (the tests use one of their own).
 set -u
@@ -58,17 +87,17 @@ tnc_name() { case "$1" in 0) echo off;; 1) echo APRS;; 2) echo KISS;; *) echo "t
 note_unverified() {  # warn when the probe found the command unknown, or has never run
   local c=${1%% *}
   [ -r "$TABLE" ] || { say "note: $c not yet verified on this radio; run d750 probe when it is plugged in"; return; }
-  grep -qE "^$c(\s|\t).*unknown to the radio" "$TABLE" && say "note: the probe found $c unknown to this radio"
+  if grep -qE "^$c(\s|\t).*unknown to the radio" "$TABLE"; then say "note: the probe found $c unknown to this radio"; fi
 }
 radio_source() { pactl list short sources 2>/dev/null | awk '/TM-D750/ && !/monitor/{print $2; exit}'; }
 radio_sink() { pactl list short sinks 2>/dev/null | awk '/TM-D750/{print $2; exit}'; }
 
 cmd=${1:-help}; shift || true
 case "$cmd" in
-help|-h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//' ;;
+help|-h|--help) sed -n '2,46p' "$0" | sed 's/^# \{0,1\}//' ;;
 state) ask state ;;
 lock|unlock) ask "$cmd" ;;
-raw) [ $# -ge 1 ] || usage "raw CMD [ARGS]"; r=$(ask "$*"); say "$r"; [[ $r == ERR* ]] && exit 1 ;;
+raw) [ $# -ge 1 ] || usage "raw CMD [ARGS]"; r=$(ask "$*"); say "$r"; if [[ $r == ERR* ]]; then exit 1; fi ;;
 probe) exec python3 -I "$HERE/probe.py" "$@" ;;
 log)
   f="$LOGDIR/d750d-$(date +%F).txt"; [ -r "$f" ] || fail "no daemon log yet for today"
@@ -131,7 +160,7 @@ tnc)
   say "before: $(tnc_name "$(field "$(body "$cur")" 1)") on band $(band_letter "$(field "$(body "$cur")" 2)")"
   r=$(set_cmd "TN $m,$b") || exit 1; [ "$DRY" = 1 ] && exit 0
   say "after: $(tnc_name "$(field "$(body "$r")" 1)") on band $(band_letter "$(field "$(body "$r")" 2)")"
-  [ "$m" = 2 ] && say "KISS mode: the radio's own APRS screen is off; this computer reads the TNC over Bluetooth" ;;
+  if [ "$m" = 2 ]; then say "KISS mode: the radio's own APRS screen is off; KISS is on /dev/d750-tnc"; fi ;;
 
 vara)
   conf="$HOME/.config/xara/xara.conf"; [ $# -ge 1 ] || usage "vara fm|hf|off|status|cq|beacon"
@@ -148,7 +177,7 @@ vara)
     status)
       say "xara: $(systemctl --user is-active xara.service)"; grep -E '^(fm|hf|ptt|ptt-lead-ms|drive-db) = ' "$conf" 2>/dev/null | sed 's/^/  /'
       say "ports: $(ss -ltnH | awk '{print $4}' | grep -E ':(8300|8100|8310)$' | sed 's/0.0.0.0://' | paste -sd' ' -)"
-      f="$LOGDIR/d750d-$(date +%F).txt"; [ -r "$f" ] && say "last keying: $(grep -E ' key in ' "$f" | tail -1)" ;;
+      f="$LOGDIR/d750d-$(date +%F).txt"; if [ -r "$f" ]; then say "last keying: $(grep -E ' key in ' "$f" | tail -1)"; fi ;;
     cq|beacon)
       # VarAC's CQ is a CQ frame with the bare call; its beacon the same with SSID 9. No slots on VARA FM.
       mycall=$(conf_get mycall); mycall=${mycall^^}; mycall=${mycall%%-*}; [ -n "$mycall" ] || fail "no mycall in $CONF_DIR/d750ctrl.conf"
@@ -218,7 +247,7 @@ vox)
   v=$(body "$vx"); vd=$(body "$(ask VD)"); vg=$(body "$(ask VG)")
   if [ $# -eq 0 ]; then [ "$v" = 0 ] && say "VOX off" || say "VOX on, setting $v"; say "delay $vd, gain $vg"; exit 0; fi
   case "${1,,}" in off) w=0;; on) w=1;; *) usage "vox [on|off]";; esac
-  r=$(set_cmd "VX $w") || exit 1; [ "$DRY" = 1 ] && exit 0; say "VOX: $(body "$r")" ;;
+  r=$(set_cmd "VX $w") || exit 1; [ "$DRY" = 1 ] && exit 0; [ "$(body "$r")" = 0 ] && say "VOX: off" || say "VOX: on" ;;
 
 clock)
   note_unverified RT; r=$(ask RT); [[ $r == RT* ]] || fail "RT not answered: $r"; t=$(body "$r")
@@ -237,7 +266,7 @@ db = 20*math.log10(rms/32768) if rms else -120; pk = 20*math.log10(peak/32768) i
 print(f"{n/48000:.1f} s: rms {db:.0f} dBFS, peak {pk:.0f} dBFS")
 print("reading:", "silence" if db < -60 else "clipping" if peak >= 32700 else "hot, lower menu 913" if pk > -6 else "good" if pk > -20 else "quiet, menu 913 could go up")
 PY
-  rm -f "$tmp" ;;
+  rc=$?; rm -f "$tmp"; exit "$rc" ;;
 
 record)
   [ $# -ge 2 ] || usage "record SECONDS FILE [rx|tx]"; n=$1; out=$2; which=${3:-rx}
@@ -245,7 +274,7 @@ record)
   timeout "$((n + 2))" parecord --device="$dev" --rate=48000 --channels=1 --format=s16le --file-format=wav "$out" 2>/dev/null
   say "recorded $(du -h "$out" | cut -f1) to $out from the $which side" ;;
 
-ptt) [ "${1:-}" = off ] || usage "ptt off"; r=$(tcp "$PTT_PORT" "T 0"); say "unkey: $r" ;;
+ptt) [ "${1:-}" = off ] || usage "ptt off"; r=$(tcp "$PTT_PORT" "T 0"); [ "$r" = "RPRT 0" ] || fail "unkey: $r"; say "unkey: $r" ;;
 
 doctor)
   ok=0; bad=0; p() { say "Pass: $*"; ok=$((ok + 1)); }; f() { say "Fail: $*"; bad=$((bad + 1)); }
@@ -254,6 +283,8 @@ doctor)
   systemctl --user is-active --quiet d750d.service && p "d750d running" || f "d750d not running"
   st=$(ask state); case "$st" in *"port open"*) p "daemon: $st";; ERR*) f "$st";; *) f "daemon: $st";; esac
   id=$(ask ID); [[ $id == ID* ]] && p "radio answers $id" || f "radio does not answer ID: $id"
+  fv=$(ask FV); ty=$(ask TY)  # firmware version and type: read only, and no failure if the radio keeps them to itself
+  if [[ $fv == "FV "?* && $ty == "TY "?* ]]; then p "radio firmware $(body "$fv"), type $(body "$ty")"; else say "note: the radio did not answer FV or TY; firmware not shown"; fi
   case "$st" in *"unsolicited bytes seen 0"*) p "CAT port carries only CAT";; *) f "unsolicited bytes on the CAT port: menu 403 or 982";; esac
   gp=$(ask GP); [[ $gp == GP* ]] && { [ "$(field "$(body "$gp")" 2)" = 0 ] && p "GPS PC output off" || f "GPS PC output on; d750 gps output off"; }
   tn=$(ask TN); [[ $tn == TN* ]] && p "tnc $(tnc_name "$(field "$(body "$tn")" 1)") on band $(band_letter "$(field "$(body "$tn")" 2)")"
@@ -265,5 +296,5 @@ doctor)
   systemctl --user is-active --quiet xara.service && p "xara running" || say "note: xara not running"
   say "$ok pass, $bad fail"; [ "$bad" = 0 ] ;;
 
-*) say "unknown verb: $cmd"; sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+*) say "unknown verb: $cmd"; sed -n '2,46p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

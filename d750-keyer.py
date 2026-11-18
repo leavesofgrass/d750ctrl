@@ -48,28 +48,72 @@ def ptt(on):
 
 
 class Keyed:
-    """Hold PTT for the duration of a block: keys, refreshes the daemon's watchdog every 15 seconds, unkeys."""
+    """Hold PTT for the duration of a block: keys, refreshes the daemon's watchdog every 15 seconds, unkeys.
+    All of it on one connection to d750d's PTT port, held open for the whole block: d750d unkeys the radio
+    whenever a client leaves while keyed, so a connection per command would key for a moment only. If the
+    connection is lost, d750d has unkeyed the radio; the refresh stops and the block runs to its end."""
 
     def __init__(self, enabled=True, lead=0.3, tail=0.2):
         self.enabled, self.lead, self.tail = enabled, lead, tail
         self.stop = threading.Event()
+        self.lock = threading.Lock()
+        self.sock = self.reader = self.thread = None
+        self.lost = False
+
+    def _send(self, on):
+        """One T 1 or T 0 on the held connection; (True, answer) only for RPRT 0."""
+        with self.lock:
+            try:
+                self.sock.sendall(b"T 1\n" if on else b"T 0\n")
+                r = self.reader.readline().decode(errors="replace").strip()
+            except (OSError, AttributeError) as e:
+                return False, str(e) or "connection closed"
+            return r == "RPRT 0", r or "connection closed"
+
+    def _close(self):
+        for f in (self.reader, self.sock):
+            try:
+                if f is not None:
+                    f.close()
+            except OSError:
+                pass
+        self.sock = self.reader = None
 
     def __enter__(self):
         if self.enabled:
-            ok, r = ptt(True)
+            try:
+                self.sock = socket.create_connection(("127.0.0.1", PTT_PORT), timeout=5)
+                self.reader = self.sock.makefile("rb")
+            except OSError as e:
+                self._close()
+                raise RuntimeError(f"could not key the radio: {e}") from e
+            ok, r = self._send(True)
             if not ok:
+                self._close()
                 raise RuntimeError(f"could not key the radio: {r}")
-            threading.Thread(target=self._refresh, daemon=True).start()
+            self.thread = threading.Thread(target=self._refresh, daemon=True)
+            self.thread.start()
             time.sleep(self.lead)
         return self
 
     def _refresh(self):
         while not self.stop.wait(15):
-            ptt(True)
+            ok, r = self._send(True)
+            if not ok:
+                if not self.stop.is_set():
+                    self.lost = True
+                    print(f"keying lost ({r}); d750d unkeyed the radio, the rest goes out unkeyed", flush=True)
+                return
 
     def __exit__(self, *exc):
         if self.enabled:
-            self.stop.set(); time.sleep(self.tail); ptt(False)
+            self.stop.set(); time.sleep(self.tail)
+            if self.thread is not None:
+                self.thread.join(timeout=10)
+            ok, r = self._send(False)
+            self._close()
+            if not ok:
+                ptt(False)      # the held connection is gone: unkey once more on a new one, to be sure
         return False
 
 

@@ -36,7 +36,7 @@ VERSION = "0.2.0"
 BEACON_WAIT = 60          # seconds to watch APRS-IS for our beacon after it goes out on the air
 DIGI_PER_MINUTE = 20      # the digipeater repeats at most this many packets a minute
 DIGI_WORDS = {"off": "Digipeater off", "fillin": "Fill-in digipeater", "wide": "Wide digipeater"}
-# Uptime Kuma push URLs, written by ~/lab/kuma/setup-kuma.py. Each push is skipped while its file is missing.
+# Uptime Kuma push URLs: each file holds one push URL, nothing else. Each push is skipped while its file is missing.
 PUSH_FILES = {w: f"~/.config/kuma-push-url-aprs-{w}" for w in ("tnc", "igate", "heard", "beacon")}
 HEARTBEAT = 300           # seconds between pushes that say the TNC and the iGate link are up
 CHECK_AFTER = 120         # seconds after the radio comes back before the TNC reset, then the check beacon
@@ -1378,7 +1378,7 @@ class Daemon:
             except Exception as e:
                 missing = isinstance(e, FileNotFoundError) or "No such file" in str(e)
                 why = "is not there yet" if missing else (
-                    "is not yours to open; run ~/fixes/d750-tnc-udev-root.sh" if "denied" in str(e) else f"cannot be opened: {e}")
+                    "is not yours to open; run sudo ./install-udev.sh from the d750ctrl folder" if "denied" in str(e) else f"cannot be opened: {e}")
                 if missing and not self._port_lost_flag():
                     self._port_lost, self.port_lost_at = True, time.time()   # its return gets the check beacon
                 if missing and not radio_on_usb():

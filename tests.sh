@@ -24,6 +24,7 @@ check "status bands" "band B: 144.390 MHz, FM, squelch 3" d750 status
 check "status tnc" "tnc: KISS on band B" d750 status
 check "raw ID" "ID TM-D750" d750 raw ID
 check "raw refuses TX" "not allowed" d750 raw TX
+check "raw refuses BE, which can send a beacon" "not allowed" d750 raw BE
 check "freq dry run" "would send: FQ 0,0146520000" d750 freq A 146.520 -n
 check "freq set" "after: band A 146.520 MHz" d750 freq A 146.520
 check "freq refused out of band" "refused" d750 freq A 27.000
@@ -54,8 +55,8 @@ d750 squelch B 5 >/dev/null
 check "fixup squelch" "Fixed: band B squelch 3" d750 fixup
 check "fixup clean" "Pass: band B squelch 3" d750 fixup
 check "vox read" "VOX off" d750 vox
-check "vox on" "VOX: 1" d750 vox on
-check "vox off" "VOX: 0" d750 vox off
+check "vox on" "VOX: on" d750 vox on
+check "vox off" "VOX: off" d750 vox off
 check "clock" "radio clock: 20" d750 clock
 check "clock set dry" "would send: RT" d750 clock set -n
 check "ptt off" "unkey: RPRT 0" d750 ptt off
@@ -63,11 +64,29 @@ check "lock" "locked" d750 lock
 check "ptt refused while locked" "RPRT -1" bash -c 'printf "T 1\n" | nc -w 2 127.0.0.1 4542'
 check "unlock" "unlocked" d750 unlock
 check "ptt key and unkey" "RPRT 0" bash -c 'printf "T 1\nT 0\n" | nc -w 2 127.0.0.1 4542 | tail -1'
+# d750-keyer's Keyed, as d750-sstv and d750-rtty use it: keyed half a second into the block, unkeyed after it
+keyed=$(python3 -I -B - "$HERE/d750-keyer.py" 2>&1 <<'PY'
+import importlib.util, socket, sys, time
+spec = importlib.util.spec_from_file_location("keyer", sys.argv[1]); k = importlib.util.module_from_spec(spec); spec.loader.exec_module(k)
+if k.PTT_PORT != 4542: print(f"not the test port: {k.PTT_PORT}"); sys.exit(1)    # never key anything but the simulator
+def keyed():
+    s = socket.create_connection(("127.0.0.1", 4543), timeout=5); s.sendall(b"state\n")
+    r = s.makefile("rb").readline().decode().strip(); s.close()
+    return "not keyed" if "not keyed" in r else "keyed" if "; keyed;" in r else r
+with k.Keyed():
+    time.sleep(0.5); inside = keyed()
+time.sleep(0.3)
+print(f"inside: {inside}"); print(f"after: {keyed()}")
+PY
+)
+check "Keyed holds the radio keyed for the whole block" "inside: keyed" printf '%s\n' "$keyed"
+check "Keyed unkeys at the end of the block" "after: not keyed" printf '%s\n' "$keyed"
 check "log" "key in" d750 log 40
 # d750d's log since November 11: reads the radio answers stay out; sets, refusals, refused keying and bytes sent unasked stay in
 from=$(lines)
-for c in TY 'FQ 0' 'BY 1' VX 'SQ 1,5' 'SQ 1,12' TX 'SQ 1,3'; do d750 raw "$c" >/dev/null 2>&1; done
+for c in TY FV 'FQ 0' 'BY 1' VX 'SQ 1,5' 'SQ 1,12' TX 'SQ 1,3'; do d750 raw "$c" >/dev/null 2>&1; done
 check "log leaves out a read the radio answered" "not logged: cmd 'TY'" logged "cmd 'TY'" "$from"
+check "log leaves out the firmware read" "not logged: cmd 'FV'" logged "cmd 'FV'" "$from"
 check "log leaves out band reads" "not logged: cmd 'FQ 0'" logged "cmd 'FQ 0'" "$from"
 check "log leaves out busy reads" "not logged: cmd 'BY 1'" logged "cmd 'BY 1'" "$from"
 check "log keeps a set" "logged: cmd 'SQ 1,5' -> 'SQ 1,5'" logged "cmd 'SQ 1,5' -> 'SQ 1,5'" "$from"
@@ -79,6 +98,7 @@ printf 'mycall = N0CALL-7\n' > "$D750_CONF_DIR/d750ctrl.conf"
 check "vara cq dry run, VarAC CQ frame" "would send one VarAC cq frame through xara: CQFRAME N0CALL" d750 -n vara cq
 check "vara beacon dry run, VarAC beacon frame" "CQFRAME N0CALL-9" d750 -n vara beacon
 check "doctor runs" "pass," d750 doctor
+check "doctor shows the firmware" "Pass: radio firmware 1.03, type K,2,1" d750 doctor
 # hamlib's NET rigctl client against the daemon: the open handshake, then reads and writes on the transmit band (B on the simulator)
 R="rigctl -m 2 -r 127.0.0.1:4542"
 check "rigctl handshake" "done" bash -c 'printf "\\chk_vfo\n\\dump_state\n" | nc -w 2 127.0.0.1 4542'

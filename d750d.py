@@ -48,7 +48,8 @@ POWER_AS_LEVEL = {0: 1.0, 1: 0.5, 2: 0.2, 3: 0.1}                             # 
 LONG_NAMES = {"get_freq": "f", "set_freq": "F", "get_mode": "m", "set_mode": "M", "get_vfo": "v", "set_vfo": "V",
               "get_ptt": "t", "set_ptt": "T", "get_split_vfo": "s", "set_split_vfo": "S", "get_level": "l",
               "set_level": "L", "get_func": "u", "set_func": "U", "get_info": "_", "quit": "q"}
-UNSAFE = {"TX", "RX", "UP", "DW", "SR", "PS", "0M", "0G"}   # only PTT may key; the rest never go through 4533
+# only PTT may key; the rest never go through 4533. BE can send an APRS beacon with the TNC in APRS mode.
+UNSAFE = {"TX", "RX", "UP", "DW", "SR", "PS", "0M", "0G", "BE"}
 LOG_ALL = os.environ.get("D750_LOG_ALL", "").strip().lower() not in ("", "0", "no", "off", "false")
 REPEAT_SECONDS = 60.0
 # Kenwood reads that take one band or channel number: FQ 0, BY 1, ME 005. With a comma they are sets.
