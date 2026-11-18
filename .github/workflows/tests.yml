@@ -1,0 +1,43 @@
+# The tests that need no radio and no sound device, on every push and pull request.
+# modes-test.sh and the rttymodem selftest stay local: they want a sound server and the .venv.
+name: tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pyserial for d750d, and what tests.sh calls (nc and hamlib's rigctl)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-serial netcat-openbsd libhamlib-utils
+
+      - name: Put the verbs on the path
+        run: echo "$GITHUB_WORKSPACE" >> "$GITHUB_PATH"
+
+      - name: The verbs, against the simulator (tests.sh)
+        run: |
+          ./test-env.sh > /dev/null 2>&1 &
+          for _ in $(seq 1 60); do nc -z 127.0.0.1 4543 2>/dev/null && break; sleep 0.25; done
+          rc=0; ./tests.sh || rc=$?
+          kill $(cat "$HOME/.local/share/d750ctrl/log/test/pids") 2>/dev/null || true
+          exit $rc
+
+      - name: The rig screen, in a pseudo terminal (d750ctrl-test.py)
+        run: python3 d750ctrl-test.py
+
+      - name: APRS (d750-aprs-test.py)
+        run: python3 -I d750-aprs-test.py
+
+      - name: APRS chat (aprschat-test.py)
+        run: python3 -I aprschat-test.py
