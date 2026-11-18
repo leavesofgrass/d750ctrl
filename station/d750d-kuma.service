@@ -1,0 +1,6 @@
+[Unit]
+Description=Tell Uptime Kuma whether d750d and the TM-D750 answer
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/d750d-kuma

@@ -1,0 +1,41 @@
+#!/bin/sh
+# xara-radio-pair: pair this computer with a radio over Bluetooth and show the sound names for ~/.config/xara/xara.conf.
+#   xara-radio-pair scan       look for radios for 20 seconds and list what answered
+#   xara-radio-pair wait       let the radio find this computer: discoverable and pairable for 3 minutes, pairing accepted
+#   xara-radio-pair MAC        pair, trust and connect the radio at MAC (AA:BB:CC:DD:EE:FF), then list the names
+#   xara-radio-pair devices    the PipeWire names xara can use right now
+# Written Saturday, November 7, 2026.
+set -u
+case "${1:-}" in
+  scan)
+    echo "Scanning for 20 seconds."
+    bluetoothctl --timeout 20 scan on >/dev/null 2>&1
+    bluetoothctl devices | sed 's/^Device /found: /'
+    ;;
+  wait)
+    echo "This computer is discoverable and pairable for 3 minutes. Start pairing on the radio now."
+    bluetoothctl discoverable on >/dev/null; bluetoothctl pairable on >/dev/null
+    printf 'agent NoInputNoOutput\ndefault-agent\n' | bluetoothctl --timeout 180 2>&1 | grep -iE 'pair|connect|trust|request|fail' | sed 's/^/  /'
+    bluetoothctl pairable off >/dev/null; bluetoothctl discoverable off >/dev/null
+    echo "Window closed. Paired now: $(bluetoothctl devices Paired | cut -d' ' -f3- | paste -sd, -)"
+    ;;
+  devices)
+    echo "PipeWire sinks (playback):"; pactl list short sinks | awk '{print "  " $2}'
+    echo "PipeWire sources (capture):"; pactl list short sources | awk '{print "  " $2}'
+    ;;
+  ??:??:??:??:??:??)
+    mac=$1
+    bluetoothctl --timeout 15 scan on >/dev/null 2>&1
+    bluetoothctl pair "$mac" 2>&1 | tail -2 | sed 's/^/  /'
+    bluetoothctl trust "$mac" >/dev/null 2>&1
+    bluetoothctl connect "$mac" 2>&1 | tail -1 | sed 's/^/  /'
+    sleep 3
+    echo "Bluetooth sound names for xara.conf:"
+    pactl list short sinks | awk '/bluez/{print "  playback = " $2}'
+    pactl list short sources | awk '/bluez/{print "  capture = " $2}'
+    echo "Then set radio = on and a ptt line, and run: systemctl --user restart xara"
+    ;;
+  *)
+    sed -n 2,7p "$0" | sed 's/^# \{0,1\}//'
+    ;;
+esac

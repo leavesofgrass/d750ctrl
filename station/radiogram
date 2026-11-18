@@ -1,0 +1,520 @@
+#!/usr/bin/env python3
+"""radiogram: write, check, read and log ARRL NTS radiograms as plain text, ready for a VARA chat, a Winlink
+message, or voice.
+
+  radiogram new                 questions one at a time, most answered by Enter from what it remembers
+  radiogram new --send CALL     the same, then handed to xarachat to send to CALL
+  radiogram setup               your station, place, signature, usual precedence and the station you send traffic to
+  radiogram address [list|show NAME|add NAME|remove NAME]   the address book of saved addressees
+  radiogram check TEXT          the group count for a text, the way the check in the preamble counts it
+  radiogram parse FILE          read a received radiogram, show it as a delivery form, log it as received
+  radiogram arl [NUMBER]        the ARL numbered texts, or one of them
+  radiogram log                 the traffic log
+  radiogram list                radiograms kept on this machine
+
+It remembers: every addressee, place, station, signature and destination you use is offered next time,
+and Tab completes from them. Files: ~/.local/share/xarachat/radiograms/ (one file per message, traffic-log.txt),
+~/.config/xarachat/radiogram.conf (your defaults and what it has learned), addresses.txt beside it. MIT, 2026.
+"""
+import datetime as dt
+import os
+import re
+import subprocess
+import sys
+try:
+    import readline
+except ImportError:  # noqa: N816
+    readline = None
+
+HOME = os.path.expanduser("~")
+CONF = f"{HOME}/.config/xarachat/radiogram.conf"
+ADDRESSES = f"{HOME}/.config/xarachat/addresses.txt"
+CHAT_CONF = f"{HOME}/.config/xarachat/xarachat.conf"
+D750_CONF = os.path.join(os.environ.get("D750_CONF_DIR") or f"{HOME}/.config/d750ctrl", "d750ctrl.conf")
+CONF_KEYS = ("station", "place", "signature", "precedence", "hx", "send_to", "next", "places", "stations", "signatures")
+STORE = f"{HOME}/.local/share/xarachat/radiograms"
+LOG = f"{STORE}/traffic-log.txt"
+
+PRECEDENCE = {"R": "Routine", "W": "Welfare", "P": "Priority", "EMERGENCY": "Emergency"}
+HX = {
+    "HXA": "collect landline delivery authorized by addressee within the given miles",
+    "HXB": "cancel if not delivered within the given hours of filing time; service the originating station",
+    "HXC": "report date and time of delivery to the originating station",
+    "HXD": "report to the originating station the identity of the station from which received, plus date and time; also the station to which relayed",
+    "HXE": "delivering station get a reply from the addressee and originate a message back",
+    "HXF": "hold delivery until the given date",
+    "HXG": "delivery by mail or landline toll call not required; if toll or other expense is involved, cancel and service the originating station",
+}
+# ARL numbered radiograms, from the ARRL list (FSD-3). Blanks are shown as ___.
+ARL = {
+    1: "Everyone safe here. Please don't worry.",
+    2: "Coming home as soon as possible.",
+    3: "Am in ___ hospital. Receiving excellent care and recovering fine.",
+    4: "Only slight property damage here. Do not be concerned about disaster reports.",
+    5: "Am moving to new location. Send no further mail or communication. Will inform you of new address when relocated.",
+    6: "Will contact you as soon as possible.",
+    7: "Please reply by Amateur Radio through the amateur delivering this message. This is a free public service.",
+    8: "Need additional ___ mobile or portable equipment for immediate emergency use.",
+    9: "Additional ___ radio operators needed to assist with emergency at this location.",
+    10: "Please contact ___. Advise to standby and provide further emergency information, instructions or assistance.",
+    11: "Establish Amateur Radio emergency communications with ___ on ___ MHz.",
+    12: "Anxious to hear from you. No word in some time. Please contact me as soon as possible.",
+    13: "Medical emergency situation exists here.",
+    14: "Situation here becoming critical. Losses and damage from ___ increasing.",
+    15: "Please advise your condition and what help is needed.",
+    16: "Property damage very severe in this area.",
+    17: "REACT communications services also available. Establish REACT communication with ___ on channel ___.",
+    18: "Please contact me as soon as possible at ___.",
+    19: "Request health and welfare report on ___. (State name, address and telephone number.)",
+    20: "Temporarily stranded. Will need some assistance. Please contact me at ___.",
+    21: "Search and Rescue assistance is needed by local authorities here. Advise availability.",
+    22: "Need accurate information on the extent and type of conditions now existing at your location. Please furnish this information and reply without delay.",
+    23: "Report at once the accessibility and best way to reach your location.",
+    24: "Evacuation of residents from this area urgently needed. Advise plans for help.",
+    25: "Furnish as soon as possible the weather conditions at your location.",
+    26: "Help and care for evacuation of sick and injured from this location needed at once.",
+    46: "Greetings on your birthday and best wishes for many more to come.",
+    47: "Reference your message number ___ to ___ delivered on ___ at ___ UTC.",
+    50: "Greetings by Amateur Radio.",
+    51: "Greetings by Amateur Radio. This message is sent as a free public service by ham radio operators at ___. Am having a wonderful time.",
+    52: "Really enjoyed being with you. Looking forward to getting together again.",
+    53: "Received your ___. It's appreciated; many thanks.",
+    54: "Many thanks for your good wishes.",
+    55: "Good news is always welcome. Very delighted to hear about yours.",
+    56: "Congratulations on your ___, a most worthy and deserved achievement.",
+    57: "Wish we could be together.",
+    58: "Have a wonderful time. Let us know when you return.",
+    59: "Congratulations on the new arrival. Hope mother and child are well.",
+    60: "Wishing you the best of everything on ___.",
+    61: "Wishing you a very Merry Christmas and a Happy New Year.",
+    62: "Greetings and best wishes to you for a pleasant ___ holiday season.",
+    63: "Victory or defeat, our best wishes are with you. Hope you win.",
+    64: "Arrived safely at ___.",
+    65: "Arriving ___ on ___. Please arrange to meet me there.",
+    66: "DX QSOs are riding high. Have worked ___ countries.",
+    67: "Your message number ___ undeliverable because of ___. Please advise.",
+}
+UNITS = ["", "ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVEN", "EIGHT", "NINE", "TEN", "ELEVEN", "TWELVE", "THIRTEEN",
+         "FOURTEEN", "FIFTEEN", "SIXTEEN", "SEVENTEEN", "EIGHTEEN", "NINETEEN"]
+TENS = ["", "", "TWENTY", "THIRTY", "FORTY", "FIFTY", "SIXTY", "SEVENTY", "EIGHTY", "NINETY"]
+MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
+
+
+def spelled(n):
+    """46 -> FORTY SIX, the way ARL numbers are sent."""
+    if n < 20:
+        return UNITS[n]
+    return (TENS[n // 10] + (" " + UNITS[n % 10] if n % 10 else "")).strip()
+
+
+def read_conf(path):
+    conf = {}
+    try:
+        for line in open(path, encoding="utf-8"):
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1); conf[k.strip().lower()] = v.strip()
+    except OSError:
+        pass
+    return conf
+
+
+def write_conf(conf):
+    os.makedirs(os.path.dirname(CONF), exist_ok=True)
+    with open(CONF, "w", encoding="utf-8") as f:
+        f.write("# radiogram: your defaults and what it has learned. Edit freely. Lists are separated by ' | '.\n")
+        f.write("# station, place, signature: offered for every radiogram. precedence, hx: usual values. send_to: the station\n")
+        f.write("# traffic normally goes to. next: the next message number. places, stations, signatures: remembered for Tab.\n")
+        for k in CONF_KEYS:
+            if conf.get(k):
+                f.write(f"{k} = {conf[k]}\n")
+
+
+def remember(conf, key, value, limit=30):
+    """Add value to the remembered list under key, most recent first, no duplicates."""
+    value = value.strip()
+    if not value:
+        return
+    items = [i.strip() for i in conf.get(key, "").split("|") if i.strip()]
+    items = [value] + [i for i in items if i.upper() != value.upper()]
+    conf[key] = " | ".join(items[:limit])
+
+
+def remembered(conf, key):
+    return [i.strip() for i in conf.get(key, "").split("|") if i.strip()]
+
+
+def load_addresses():
+    """The address book: blocks separated by blank lines; the first line of a block is the short name."""
+    book = {}
+    try:
+        text = open(ADDRESSES, encoding="utf-8").read()
+    except OSError:
+        return book
+    for block in re.split(r"\n\s*\n", text):
+        lines = [l.rstrip() for l in block.splitlines() if l.strip() and not l.lstrip().startswith("#")]
+        if len(lines) >= 2:
+            book[lines[0].strip().lower()] = [l.upper() for l in lines[1:]]
+    return book
+
+
+def save_address(name, lines):
+    book = load_addresses()
+    book[name.lower()] = [l.upper() for l in lines]
+    os.makedirs(os.path.dirname(ADDRESSES), exist_ok=True)
+    with open(ADDRESSES, "w", encoding="utf-8") as f:
+        f.write("# radiogram address book. One addressee per block, a blank line between blocks.\n")
+        f.write("# The first line of a block is its short name; the lines after it are the address as sent.\n\n")
+        for n in sorted(book):
+            f.write(n + "\n" + "\n".join(book[n]) + "\n\n")
+
+
+def suggest_name(first_line):
+    """A short name for a new addressee: the first word of the first line, lower case."""
+    w = re.sub(r"[^A-Za-z0-9]", "", first_line.split()[0]) if first_line.split() else "addressee"
+    return (w or "addressee").lower()
+
+
+_choices = []
+
+
+def _complete(text, state):
+    hits = [c for c in _choices if c.lower().startswith(text.lower())]
+    return hits[state] if state < len(hits) else None
+
+
+if readline:
+    readline.set_completer(_complete)
+    readline.set_completer_delims("")
+    readline.parse_and_bind("tab: complete")
+
+
+def groups(text):
+    """Turn free text into NTS groups: upper case, periods become X, question marks QUERY, other punctuation
+    dropped, and ARL 46 style references spelled out. Returns the list of groups."""
+    t = text.upper()
+    t = re.sub(r"\bARL\s+(\d{1,2})\b", lambda m: "ARL " + spelled(int(m.group(1))), t)
+    t = t.replace(".", " X ").replace("?", " QUERY ")
+    t = re.sub(r"[^A-Z0-9/ \n-]", " ", t)
+    return t.split()
+
+
+def check_of(gs):
+    n = len(gs)
+    return f"ARL {n}" if "ARL" in gs else str(n)
+
+
+def ask(question, default="", choices=None):
+    """One question, Enter keeps the default, Tab completes from choices when there are any."""
+    global _choices
+    _choices = list(choices or [])
+    tail = f" [{default}]" if default else ""
+    hint = ""
+    if choices and len(choices) <= 6:
+        shown = [c for c in choices if c != default][:5]
+        if shown: hint = f" (also: {', '.join(shown)})"
+    elif choices:
+        hint = " (Tab completes)"
+    try:
+        v = input(f"{question}{tail}{hint}: ").strip()
+    except EOFError:
+        v = ""
+    _choices = []
+    return v or default
+
+
+def ask_lines(question):
+    print(f"{question} (one line at a time, an empty line ends it):")
+    out = []
+    while True:
+        try:
+            v = input("  ").rstrip()
+        except EOFError:
+            v = ""
+        if not v:
+            break
+        out.append(v)
+    return out
+
+
+def transmission_form(m):
+    """The radiogram as it is sent, line by line."""
+    pre = ["NR", m["number"], m["precedence"]]
+    if m.get("hx"): pre.append(m["hx"])
+    pre += [m["station"], m["check"], m["place"]]
+    if m.get("time"): pre.append(m["time"])
+    pre.append(m["date"])
+    lines = [" ".join(pre)]
+    lines += m["address"]
+    lines.append("BT")
+    # text in lines of at most five groups, the traditional layout
+    gs = m["text"]
+    for i in range(0, len(gs), 5):
+        lines.append(" ".join(gs[i:i + 5]))
+    lines.append("BT")
+    lines.append(m["signature"])
+    if m.get("opnote"): lines.append("OP NOTE " + m["opnote"])
+    lines.append("AR")
+    return lines
+
+
+def delivery_form(m, received_from=None):
+    """The same radiogram laid out with labels, for reading to the addressee or filing."""
+    out = ["RADIOGRAM",
+           f"Number {m['number']}   Precedence {PRECEDENCE.get(m['precedence'], m['precedence'])}"
+           + (f"   Handling {m['hx']}" if m.get("hx") else ""),
+           f"Station of origin {m['station']}   Check {m['check']}   Place of origin {m['place']}"
+           + (f"   Time filed {m['time']}" if m.get("time") else "") + f"   Date {m['date']}",
+           "To:"]
+    out += ["  " + a for a in m["address"]]
+    out.append("Text:")
+    out.append("  " + " ".join(m["text"]))
+    arl = [g for i, g in enumerate(m["text"]) if g == "ARL"]
+    if arl:
+        words = " ".join(m["text"])
+        for n, meaning in ARL.items():
+            if f"ARL {spelled(n)}" in words:
+                out.append(f"  ARL {spelled(n)} means: {meaning}")
+    out.append(f"Signature: {m['signature']}")
+    if m.get("opnote"): out.append(f"Op note: {m['opnote']}")
+    if received_from: out.append(f"Received from {received_from} at {dt.datetime.now(dt.timezone.utc).strftime('%H%MZ %b %d').upper()}")
+    return out
+
+
+def parse_text(text):
+    """Read a radiogram in transmission form back into its fields. Tolerant of extra spaces and case."""
+    lines = [l.strip() for l in text.upper().splitlines() if l.strip()]
+    if not lines or not lines[0].startswith("NR "):
+        raise ValueError("the first line should start with NR, the message number")
+    pre = lines[0].split()
+    m = {"number": pre[1], "precedence": pre[2]}
+    i = 3
+    if i < len(pre) and pre[i].startswith("HX"): m["hx"] = pre[i]; i += 1
+    m["station"] = pre[i]; i += 1
+    if pre[i] == "ARL": m["check"] = f"ARL {pre[i + 1]}"; i += 2
+    else: m["check"] = pre[i]; i += 1
+    rest = pre[i:]
+    if rest and re.match(r"^\d{4}Z$", rest[-2] if len(rest) >= 3 else ""):
+        m["time"] = rest[-2]; m["date"] = " ".join(rest[-1:]); place = rest[:-2]
+    else:
+        m["date"] = " ".join(rest[-2:]); place = rest[:-2]
+        if len(rest) >= 3 and re.match(r"^\d{4}Z$", rest[-3]): m["time"] = rest[-3]; place = rest[:-3]
+    m["place"] = " ".join(place)
+    try:
+        b1 = lines.index("BT"); b2 = lines.index("BT", b1 + 1)
+    except ValueError:
+        raise ValueError("the text should sit between two BT lines")
+    m["address"] = lines[1:b1]
+    m["text"] = " ".join(lines[b1 + 1:b2]).split()
+    tail = lines[b2 + 1:]
+    tail = [l for l in tail if l != "AR"]
+    m["opnote"] = ""
+    for l in list(tail):
+        if l.startswith("OP NOTE "): m["opnote"] = l[8:]; tail.remove(l)
+    m["signature"] = " ".join(tail)
+    return m
+
+
+def save(m, lines, kind):
+    os.makedirs(STORE, exist_ok=True)
+    stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    path = f"{STORE}/{stamp}-{kind}-{m['number']}-{m['station']}.txt"
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    with open(LOG, "a", encoding="utf-8") as f:
+        f.write(f"{dt.datetime.now(dt.timezone.utc).strftime('%Y-%m-%d %H%MZ')} {kind:8} NR {m['number']} {m['precedence']} {m['station']} check {m['check']} to {m['address'][0] if m['address'] else '?'}\n")
+    return path
+
+
+def ask_address(book):
+    """The addressee: a saved short name fills every line; a typed first line may match a saved addressee;
+    otherwise the lines are typed and offered for saving."""
+    names = sorted(book)
+    print("Addressee: a saved name" + (f" ({', '.join(names[:8])}{', ...' if len(names) > 8 else ''})" if names else "")
+          + ", or type the first line of a new address.")
+    first = ask("Addressee", "", choices=names + [book[n][0] for n in names])
+    if not first:
+        return [], None
+    if first.lower() in book:
+        lines = book[first.lower()]
+        print("  " + " / ".join(lines))
+        return lines, first.lower()
+    for n in names:
+        if book[n][0].upper() == first.upper():
+            print("  saved as " + n + ": " + " / ".join(book[n]))
+            if ask("Use it", "yes").lower().startswith("y"):
+                return book[n], n
+            break
+    lines = [first.upper()]
+    print("  the rest of the address, one line at a time, an empty line ends it:")
+    while True:
+        try:
+            v = input("  ").strip()
+        except EOFError:
+            v = ""
+        if not v:
+            break
+        lines.append(v.upper())
+    name = ask("Save this addressee as", suggest_name(first), choices=[])
+    if name.lower() not in ("no", "n", "none"):
+        save_address(name, lines)
+        print(f"  saved; next time type {name.lower()}")
+        return lines, name.lower()
+    return lines, None
+
+
+def cmd_new(send_to=None):
+    conf = read_conf(CONF); chat = read_conf(CHAT_CONF); book = load_addresses()
+    station = conf.get("station") or chat.get("mycall") or read_conf(D750_CONF).get("mycall", "")
+    print("A radiogram, one question at a time. Enter keeps what is in brackets; Tab completes where it can.")
+    m = {}
+    m["number"] = ask("Message number", conf.get("next", "1"))
+    p = ask("Precedence: R routine, W welfare, P priority, EMERGENCY", conf.get("precedence", "R"), choices=list(PRECEDENCE)).upper()
+    m["precedence"] = p if p in PRECEDENCE else "R"
+    hx = ask("Handling instructions, HXA to HXG, or none", conf.get("hx", "none"), choices=list(HX) + ["none"]).upper()
+    m["hx"] = hx if hx in HX else ""
+    if m["hx"]: print(f"  {m['hx']}: {HX[m['hx']]}")
+    m["station"] = ask("Station of origin", station, choices=remembered(conf, "stations")).upper()
+    m["place"] = ask("Place of origin, city and state", conf.get("place", ""), choices=remembered(conf, "places")).upper()
+    now = dt.datetime.now(dt.timezone.utc)
+    t = ask("Time filed, four digits UTC, now, or none", "now").upper()
+    if t == "NOW": t = now.strftime("%H%M")
+    m["time"] = (t + "Z") if re.match(r"^\d{4}$", t) else (t if re.match(r"^\d{4}Z$", t) else "")
+    m["date"] = ask("Date", f"{MONTHS[now.month - 1]} {now.day}").upper()
+    m["address"], _ = ask_address(book)
+    print("Text. Periods become X, question marks QUERY. Write ARL 46 for a numbered text; radiogram arl lists them.")
+    gs = groups(" ".join(ask_lines("Text")))
+    m["text"] = gs; m["check"] = check_of(gs)
+    print(f"  check {m['check']}" + (", more than 25 groups, consider splitting" if len(gs) > 25 else ""))
+    for n, meaning in ARL.items():
+        if f"ARL {spelled(n)}" in " ".join(gs): print(f"  ARL {spelled(n)}: {meaning}")
+    m["signature"] = ask("Signature", conf.get("signature", ""), choices=remembered(conf, "signatures")).upper()
+    m["opnote"] = ask("Op note, or none", "none").upper()
+    if m["opnote"] == "NONE": m["opnote"] = ""
+    lines = transmission_form(m)
+    print(); print("\n".join(lines)); print()
+    path = save(m, lines, "sent")
+    # remember what was used
+    conf.update({"station": m["station"], "place": m["place"], "signature": m["signature"], "precedence": m["precedence"]})
+    conf["hx"] = m["hx"] or "none"
+    remember(conf, "places", m["place"]); remember(conf, "stations", m["station"]); remember(conf, "signatures", m["signature"])
+    try: conf["next"] = str(int(m["number"]) + 1)
+    except ValueError: pass
+    to = send_to
+    if not to:
+        default = conf.get("send_to", "")
+        answer = ask("Send it now with xarachat to station, or none", default or "none", choices=remembered(conf, "stations")).upper()
+        if answer not in ("NONE", "NO", "N", ""): to = answer
+    if to:
+        conf["send_to"] = to; remember(conf, "stations", to)
+    write_conf(conf)
+    print(f"saved {path}; logged in {LOG}")
+    if to:
+        print(f"handing to xarachat for {to}: it connects, sends the lines, and stays in the chat")
+        try:
+            os.execvp("xarachat", ["xarachat", "--call", to, "--file", path])
+        except OSError:
+            print(f"xarachat is not installed here. Send the saved file with the chat program you use: {path}")
+            sys.exit(1)
+    else:
+        print(f"to send it later: xarachat --call CALL --file {path}, or /send {path} inside a chat")
+
+
+def cmd_setup():
+    conf = read_conf(CONF); chat = read_conf(CHAT_CONF)
+    print("Your station, once. Enter keeps what is in brackets. Everything can be changed later with radiogram setup.")
+    conf["station"] = ask("Your call sign, the station of origin", conf.get("station") or chat.get("mycall") or read_conf(D750_CONF).get("mycall", "")).upper()
+    conf["place"] = ask("Your place of origin, city and state", conf.get("place", "")).upper()
+    conf["signature"] = ask("Your usual signature", conf.get("signature", conf["station"])).upper()
+    p = ask("Usual precedence", conf.get("precedence", "R"), choices=list(PRECEDENCE)).upper(); conf["precedence"] = p if p in PRECEDENCE else "R"
+    hx = ask("Usual handling instructions, or none", conf.get("hx", "none"), choices=list(HX) + ["none"]).upper(); conf["hx"] = hx if hx in HX else "none"
+    conf["send_to"] = ask("Station you normally send traffic to, or none", conf.get("send_to", "none")).upper()
+    if conf["send_to"] == "NONE": conf["send_to"] = ""
+    conf.setdefault("next", "1")
+    remember(conf, "places", conf["place"]); remember(conf, "stations", conf["station"]); remember(conf, "signatures", conf["signature"])
+    if conf["send_to"]: remember(conf, "stations", conf["send_to"])
+    write_conf(conf)
+    print(f"saved {CONF}. radiogram address add NAME saves the people you write to.")
+
+
+def cmd_address(args):
+    book = load_addresses()
+    sub = args[0] if args else "list"
+    if sub == "list":
+        if not book: print("no saved addressees yet; radiogram address add NAME"); return
+        for n in sorted(book): print(f"{n}: {' / '.join(book[n])}")
+    elif sub == "show" and len(args) > 1:
+        n = args[1].lower(); print("\n".join(book[n]) if n in book else f"no addressee named {n}")
+    elif sub == "add" and len(args) > 1:
+        n = args[1].lower()
+        print(f"Address for {n}: name, street, city state zip, phone; one line each, an empty line ends it.")
+        lines = [l.upper() for l in ask_lines("Address")]
+        if not lines: print("nothing saved"); return
+        save_address(n, lines); print(f"saved {n}: {' / '.join(lines)}")
+    elif sub == "remove" and len(args) > 1:
+        n = args[1].lower()
+        if n not in book: print(f"no addressee named {n}"); return
+        del book[n]
+        os.makedirs(os.path.dirname(ADDRESSES), exist_ok=True)
+        with open(ADDRESSES, "w", encoding="utf-8") as f:
+            f.write("# radiogram address book. One addressee per block, a blank line between blocks.\n")
+            f.write("# The first line of a block is its short name; the lines after it are the address as sent.\n\n")
+            for k in sorted(book): f.write(k + "\n" + "\n".join(book[k]) + "\n\n")
+        print(f"removed {n}")
+    else:
+        print("usage: radiogram address [list | show NAME | add NAME | remove NAME]")
+
+
+def cmd_parse(path):
+    text = sys.stdin.read() if path == "-" else open(path, encoding="utf-8").read()
+    m = parse_text(text)
+    want = check_of(m["text"])
+    print("\n".join(delivery_form(m, received_from=None)))
+    if want != m["check"]:
+        print(f"check mismatch: the preamble says {m['check']}, the text counts {want}; service the originating station")
+    conf = read_conf(CONF)
+    frm = ask("Received from station, or none", "none", choices=remembered(conf, "stations")).upper()
+    if frm not in ("NONE", ""):
+        remember(conf, "stations", frm); write_conf(conf)
+    remember(conf, "stations", m["station"]); write_conf(conf)
+    lines = transmission_form(m)
+    p = save(m, lines, "received")
+    print(f"logged as received{' from ' + frm if frm != 'NONE' else ''}; copy saved {p}")
+
+
+def main():
+    args = sys.argv[1:]
+    cmd = args[0] if args else "help"
+    if cmd == "new":
+        to = None
+        if "--send" in args:
+            i = args.index("--send"); to = args[i + 1].upper() if i + 1 < len(args) else None
+            if not to: print("Fail: --send needs a call sign"); sys.exit(2)
+        cmd_new(to)
+    elif cmd == "setup":
+        cmd_setup()
+    elif cmd == "address":
+        cmd_address(args[1:])
+    elif cmd == "check":
+        gs = groups(" ".join(args[1:]) if len(args) > 1 else sys.stdin.read())
+        print(f"{check_of(gs)}: {' '.join(gs)}")
+    elif cmd == "parse" and len(args) > 1:
+        cmd_parse(args[1])
+    elif cmd == "arl":
+        if len(args) > 1 and args[1].isdigit():
+            n = int(args[1]); print(f"ARL {spelled(n)}: {ARL.get(n, 'not in the list')}")
+        else:
+            for n, t in ARL.items(): print(f"ARL {n:2} ({spelled(n)}): {t}")
+    elif cmd == "log":
+        print(open(LOG, encoding="utf-8").read().rstrip() if os.path.exists(LOG) else "no traffic yet")
+    elif cmd == "list":
+        files = sorted(os.listdir(STORE)) if os.path.isdir(STORE) else []
+        for f in files:
+            if f.endswith(".txt") and f != "traffic-log.txt": print(f)
+        if not files: print("no radiograms yet")
+    else:
+        print(__doc__.strip()); sys.exit(0 if cmd in ("help", "-h", "--help") else 2)
+
+
+if __name__ == "__main__":
+    main()

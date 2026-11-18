@@ -1,0 +1,15 @@
+#!/bin/sh
+# xara-wait-audio: wait until the sound card named in xara's config is present in PipeWire,
+# so xara starts when the radio is switched on instead of failing and being given up on.
+# Use: xara-wait-audio [CONFIG]. Prints one line when it starts waiting and one when the card is there.
+# Written Sunday, November 8, 2026.
+conf=${1:-$HOME/.config/xara/xara.conf}
+get() { sed -nE "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*([^[:space:]#]+).*/\1/p" "$conf" | head -1; }
+sink=$(get playback); src=$(get capture)
+[ -n "$sink" ] || exit 0                      # no named card (null sinks or default): nothing to wait for
+present() { pactl list short sinks 2>/dev/null | grep -q -- "$sink" && { [ -z "$src" ] || pactl list short sources 2>/dev/null | grep -q -- "$src"; }; }
+present && exit 0
+echo "waiting for the radio's sound card: $sink"
+while ! present; do sleep 5; done
+echo "sound card present: $sink; giving it 10 s to settle"
+sleep 10    # started 4 s after the card appeared, xara saw a capture backlog and a runaway clock estimate; 10 s later it starts clean

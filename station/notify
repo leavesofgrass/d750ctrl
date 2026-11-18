@@ -1,0 +1,24 @@
+#!/bin/sh
+# notify TOPIC TITLE MESSAGE [PRIORITY 1-5] [TAGS]
+# Posts one message to an ntfy server, by default the one on this computer. Never fails the caller:
+# if ntfy is down the message is lost and the exit code is still 0. Written Monday, October 26, 2026.
+# Settings: ~/.config/d750ctrl/notify.conf (D750_CONF_DIR points at another settings folder), lines
+#   server = http://127.0.0.1:2586
+#   token = tk_...        (empty: no Authorization header is sent)
+# NOTIFY_SERVER and NOTIFY_TOKEN override the file. Keep the file owner only: chmod 600.
+# The token goes to curl on its standard input, never on its command line, so other users cannot see it.
+topic="${1:?topic}"; title="${2:?title}"; msg="${3:?message}"; prio="${4:-3}"; tags="${5:-}"
+conf="${D750_CONF_DIR:-$HOME/.config/d750ctrl}/notify.conf"
+get() { [ -r "$conf" ] && sed -nE "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*([^[:space:]]*).*/\1/p" "$conf" | head -1; }
+server="${NOTIFY_SERVER:-$(get server)}"; server="${server:-http://127.0.0.1:2586}"
+tok="${NOTIFY_TOKEN:-$(get token)}"
+# a line break in a header would start a new header: make them spaces
+title=$(printf '%s' "$title" | tr '\r\n' '  '); tags=$(printf '%s' "$tags" | tr '\r\n' '  ')
+set -- curl -fsS -m 10 -o /dev/null -H "Title: $title" -H "Priority: $prio" -H "Tags: $tags" --data-raw "$msg" "${server%/}/$topic"
+if [ -n "$tok" ]; then
+  tok=$(printf '%s' "$tok" | sed 's/[\\"]/\\&/g')
+  printf 'header = "Authorization: Bearer %s"\n' "$tok" | "$@" -K - 2>/dev/null
+else
+  "$@" 2>/dev/null
+fi || echo "notify: ntfy did not take the message" >&2
+exit 0

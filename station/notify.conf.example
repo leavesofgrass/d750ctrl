@@ -1,0 +1,6 @@
+# notify settings. Copy to ~/.config/d750ctrl/notify.conf, then: chmod 600 ~/.config/d750ctrl/notify.conf
+# Lines starting with # are ignored. NOTIFY_SERVER and NOTIFY_TOKEN in the environment override these.
+# The ntfy server notices go to, without a slash at the end. The default is an ntfy server on this computer.
+server = http://127.0.0.1:2586
+# An ntfy access token, if your server asks for one. Leave it empty to send no Authorization header.
+token =

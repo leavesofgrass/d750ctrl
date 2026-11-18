@@ -1,0 +1,763 @@
+#!/usr/bin/env -S python3 -I
+"""station: raise and lower the station's services with one word each.
+
+Only "systemctl --user", "docker" and the d750 helper. No sudo, no system units.
+Nothing here uses the internet: no pulls, no updates, no lookups of its own.
+
+The services come from a settings file, ~/.config/d750ctrl/station.conf (D750_CONF_DIR points at another
+settings folder). Without one, station knows the radio pieces of d750ctrl: radio (d750d), xara and aprs.
+station.conf.example beside this file shows every field; one [service NAME] section per service, in start order.
+
+Markers: stop and off of a container that names a marker write an empty file that a watchdog timer of your own
+can honor, so it never brings back what was lowered on purpose. off-NAME in ~/.config/station survives a reboot,
+stop-NAME in $XDG_RUNTIME_DIR/station does not. start, on and restart remove both. station never starts, stops,
+enables or disables that timer; with a [watch] section it only reads it, to say when it is stopped or off at boot.
+Written Thursday, November 12, 2026. Settings file and built-in table: Tuesday, November 17, 2026.
+"""
+import configparser
+import datetime
+import os
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+import time
+
+HOME = os.path.expanduser("~")
+CONF_DIR = os.environ.get("D750_CONF_DIR") or os.path.join(HOME, ".config", "d750ctrl")
+CONF_FILE = os.path.join(CONF_DIR, "station.conf")
+
+# ---- The built-in table, used when there is no station.conf. Order here is the START order; stop runs it backwards.
+# name:     the word you type.             group: "station" or "network". "all" means station, "network" the other.
+# kind:     "unit" (a systemd user unit) or "container" (docker, with its compose file).
+# unit / container+compose: what is run.   label: the words printed, first on every line.
+# warn, ask:  said and asked before a START that can transmit. None for neither.
+# stop_warn, stop_ask: said and asked before a STOP that cuts something off. Optional.
+# stop_note: said after a stop. Optional.   marker: the fixed name used in its marker files. Optional.
+# no_block: do not wait for it to finish starting.   waiting: said while it is still starting.
+# unkey:    run "d750 ptt off" before stopping it (a plain stop does not unkey the radio).
+# dependents: units that stop working while this one is down; if one runs, the note is said after a stop or restart.
+DEFAULT_SERVICES = [
+    {"name": "radio", "group": "station", "kind": "unit", "unit": "d750d.service", "label": "Radio service",
+     "unkey": True, "dependents": [{"unit": "xara.service", "note": "xara cannot key until it is back."}]},
+    {"name": "xara", "group": "station", "kind": "unit", "unit": "xara.service", "label": "xara",
+     "no_block": True, "waiting": "Waiting for the radio's sound card."},
+    {"name": "aprs", "group": "station", "kind": "unit", "unit": "d750-aprs.service", "label": "APRS",
+     "warn": "Starting APRS can transmit.", "ask": "Start APRS? No is the default"},
+]
+FIELDS = {"group": "station", "kind": "unit", "unit": None, "container": None, "compose": None, "label": None,
+          "warn": None, "ask": None, "stop_warn": None, "stop_ask": None, "stop_note": None, "marker": None,
+          "no_block": False, "waiting": None, "unkey": False, "dependents": []}
+BOOL_FIELDS = ("no_block", "unkey")
+GROUP_WORDS = (("all", "station"), ("network", "network"))   # the group words, and the group each one means
+HEADINGS = [("station", "Station:"), ("network", "Network:")]
+WORDS = ("status", "start", "stop", "restart", "on", "off")
+PLAIN = re.compile(r"^[a-z0-9][a-z0-9_.@-]*$")          # names, markers: letters, digits, - _ . @ only
+
+# Filled by load_settings(): the table, the read-only watch on a safety-net timer, the protected names, and help.
+SERVICES = []
+GROUPS = {}
+TIMER = None
+MARKER_NAMES = ()                                       # the only names a marker file is ever made for
+REFUSED = {}                                            # names refused on purpose, with the reason said back
+NEVER_TOUCHED = ""
+EXAMPLES = []
+
+OFF_DIR = os.path.join(HOME, ".config", "station")      # off-NAME: survives a reboot
+SETTLE = float(os.environ.get("STATION_SETTLE", "2"))   # seconds to wait before checking a start
+STATE_WORDS = {"active": "running", "activating": "starting", "failed": "failed", "inactive": "stopped",
+               "deactivating": "stopping", "missing": "not created", "unhealthy": "running, not healthy",
+               "paused": "paused"}
+INSPECT = ("{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}"
+           "|{{.State.StartedAt}}|{{.HostConfig.RestartPolicy.Name}}")
+NUMBER_WORDS = ("no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven",
+                "twelve")
+
+DRY = False
+YES = False
+DOCKER_SAID = False
+
+
+class SettingsError(Exception):
+    pass
+
+
+def service(entry):
+    """One table entry with every field present, the defaults filled in."""
+    svc = {k: (list(v) if isinstance(v, list) else v) for k, v in FIELDS.items()}
+    svc.update(entry)
+    if not svc["label"]:
+        svc["label"] = svc["name"]
+    return svc
+
+
+def read_service(name, sec):
+    """A [service NAME] section to a table entry. Raises SettingsError with a plain reason."""
+    where = f"[service {name}]"
+    if not PLAIN.match(name):
+        raise SettingsError(f"{where}: a name is letters, digits, dash, dot, underscore only.")
+    if name in dict(GROUP_WORDS) or name in WORDS or name == "help":
+        raise SettingsError(f"{where}: {name} is a word station uses itself.")
+    entry = {"name": name}
+    for key in sec:
+        if key not in FIELDS:
+            raise SettingsError(f"{where}: not a known field: {key}")
+        value = sec[key].strip()
+        if key in BOOL_FIELDS:
+            try:
+                entry[key] = sec.getboolean(key)
+            except ValueError:
+                raise SettingsError(f"{where}: {key} is yes or no.")
+        elif key == "dependents":
+            deps = []
+            for line in value.splitlines():
+                if not line.strip():
+                    continue
+                unit, _, note = line.partition(":")
+                if not unit.strip() or not note.strip():
+                    raise SettingsError(f"{where}: each dependents line is UNIT: note.")
+                deps.append({"unit": unit.strip(), "note": note.strip()})
+            entry[key] = deps
+        elif key == "compose":
+            entry[key] = os.path.expandvars(os.path.expanduser(value)) or None
+        else:
+            entry[key] = value or None
+    svc = service(entry)
+    if svc["group"] not in ("station", "network"):
+        raise SettingsError(f"{where}: group is station or network.")
+    if svc["kind"] == "unit":
+        if not svc["unit"]:
+            raise SettingsError(f"{where}: a unit needs unit = NAME.service")
+    elif svc["kind"] == "container":
+        if not svc["container"] or not svc["compose"]:
+            raise SettingsError(f"{where}: a container needs container = and compose =")
+        if svc["unkey"]:
+            raise SettingsError(f"{where}: unkey is for units only.")
+    else:
+        raise SettingsError(f"{where}: kind is unit or container.")
+    if bool(svc["warn"]) != bool(svc["ask"]):
+        raise SettingsError(f"{where}: warn and ask go together.")
+    if bool(svc["stop_warn"]) != bool(svc["stop_ask"]):
+        raise SettingsError(f"{where}: stop_warn and stop_ask go together.")
+    if svc["marker"] and (svc["kind"] != "container" or not PLAIN.match(svc["marker"])):
+        raise SettingsError(f"{where}: a marker is a plain name, on a container only.")
+    return svc
+
+
+def load_settings(path=None):
+    """Fill the table from station.conf, or from the built-in table when there is no file."""
+    global SERVICES, GROUPS, TIMER, MARKER_NAMES, REFUSED, NEVER_TOUCHED, EXAMPLES
+    path = path or CONF_FILE
+    services, timer, refused, never, examples = None, None, {}, "", None
+    if os.path.exists(path):
+        cp = configparser.ConfigParser(delimiters=("=",), comment_prefixes=("#", ";"), inline_comment_prefixes=None,
+                                       interpolation=None, default_section="station-defaults-unused")
+        try:
+            with open(path, encoding="utf-8") as f:
+                cp.read_file(f)
+        except (OSError, UnicodeDecodeError, configparser.Error) as e:
+            raise SettingsError(str(e).splitlines()[0])
+        services = []
+        for sec in cp.sections():
+            words = sec.split()
+            if len(words) == 2 and words[0] == "service":
+                svc = read_service(words[1].lower(), cp[sec])
+                if any(s["name"] == svc["name"] for s in services):
+                    raise SettingsError(f"[{sec}]: the name is used twice.")
+                services.append(svc)
+            elif sec == "watch":
+                w = cp[sec]
+                unit = w.get("unit", "").strip()
+                if not unit:
+                    raise SettingsError("[watch]: it needs unit = NAME.timer")
+                timer = service({"name": w.get("name", "").strip() or unit.rsplit(".", 1)[0], "kind": "unit",
+                                 "unit": unit, "group": w.get("group", "network").strip(),
+                                 "label": w.get("label", "").strip() or unit})
+                if timer["group"] not in ("station", "network"):
+                    raise SettingsError("[watch]: group is station or network.")
+            elif sec == "protect":
+                for k, v in cp[sec].items():
+                    refused[k.strip().lower()] = v.strip()
+            elif sec == "help":
+                never = cp[sec].get("never_touched", "").strip()
+                if "examples" in cp[sec]:
+                    examples = [ln.strip() for ln in cp[sec]["examples"].splitlines() if ln.strip()]
+            else:
+                raise SettingsError(f"[{sec}]: not a known section.")
+        if not services:
+            raise SettingsError("no [service NAME] section.")
+    else:
+        services = [service(dict(s)) for s in DEFAULT_SERVICES]
+    SERVICES, TIMER, REFUSED, NEVER_TOUCHED = services, timer, refused, never
+    MARKER_NAMES = tuple(s["marker"] for s in services if s["marker"])
+    GROUPS = {word: group for word, group in GROUP_WORDS if group_of(group)}
+    EXAMPLES = examples if examples is not None else default_examples()
+
+
+def default_examples():
+    """Status, a stop of a quiet station service, and an off of the first network service."""
+    out = ["station status"]
+    quiet = [s for s in group_of("station") if not s["unkey"] and not s["warn"]] or group_of("station")
+    if quiet:
+        out.append(f"station stop {quiet[0]['name']}")
+    if group_of("network"):
+        out.append(f"station off {group_of('network')[0]['name']}")
+    return out
+
+
+def stop_dir():
+    """stop-NAME lives here: a tmpfs that a reboot clears."""
+    return os.path.join(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}", "station")
+
+
+def marker_path(svc, kind):
+    """The full path of a marker, built from the fixed names only. kind is "off" or "stop". None if none."""
+    name = svc.get("marker")
+    if name not in MARKER_NAMES or kind not in ("off", "stop"):
+        return None
+    return os.path.join(OFF_DIR if kind == "off" else stop_dir(), f"{kind}-{name}")
+
+
+def write_marker(svc, kind):
+    """Make the marker file, before the stop. False if it could not be made."""
+    path = marker_path(svc, kind)
+    if path is None:
+        return True
+    if DRY:
+        say(f"mkdir -p {os.path.dirname(path)}")
+        say(f"touch {path}")
+        return True
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        open(path, "a").close()
+    except OSError:
+        say(f"{svc['label']}: could not write the {kind} marker.")
+        return False
+    return True
+
+
+def remove_markers(svc):
+    """Remove both markers of this service, exactly those two files, before the start."""
+    for kind in ("off", "stop"):
+        path = marker_path(svc, kind)
+        if path is None:
+            continue
+        if DRY:
+            say(f"rm -f {path}")
+            continue
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            say(f"{svc['label']}: could not remove the {kind} marker.")
+            return False
+    return True
+
+
+def say(text):
+    print(text)
+
+
+def by_name(name):
+    for s in SERVICES:
+        if s["name"] == name:
+            return s
+    return None
+
+
+def group_of(group):
+    return [s for s in SERVICES if s["group"] == group]
+
+
+def count_words(n):
+    return NUMBER_WORDS[n] if n < len(NUMBER_WORDS) else str(n)
+
+
+def help_lines():
+    out = ["station: raise and lower services.",
+           "Words:",
+           "status [NAME]: show",
+           "start NAME: raise",
+           "stop NAME: lower until a reboot",
+           "restart NAME: stop, then start",
+           "on NAME: start, and on at boot",
+           "off NAME: lower, and off at boot",
+           "help: this text"]
+    station, network = group_of("station"), group_of("network")
+    if station:
+        out += ["Station names:"]
+        out += [f"{s['name']}: {s['label']}" for s in station]
+        out += [f"all: the {count_words(len(station))} above"]
+    if network:
+        out += ["Network names:"]
+        out += [f"{s['name']}: {s['label']}" for s in network]
+        out += [f"network: the {count_words(len(network))} above"]
+    if station and network:
+        out += ["all and network: start, stop,",
+                "status only. all never touches",
+                "the network group."]
+    elif station:
+        out += ["all: start, stop, status only."]
+    elif network:
+        out += ["network: start, stop, status only."]
+    out += ["Options:",
+            "--dry-run: show commands, run none",
+            "--yes: skip the questions"]
+    questions = [f"start {s['label']}" for s in SERVICES if s["ask"]]
+    questions += [f"stop {s['label']}" for s in SERVICES if s["stop_ask"]]
+    if questions:
+        out.append("Questions: " + ", ".join(questions) + ".")
+    if TIMER and MARKER_NAMES:
+        out.append(f"{TIMER['name']} skips what you lowered.")
+    out.append("No internet needed.")
+    if NEVER_TOUCHED:
+        words = NEVER_TOUCHED.split()
+        line = "Never touched:"
+        for w in words:                         # short lines, for a 40-cell display
+            if len(line) + 1 + len(w) > 32:
+                out.append(line)
+                line = w
+            else:
+                line += " " + w
+        out.append(line + ("" if line.endswith(".") else "."))
+    if EXAMPLES:
+        out.append("Examples:")
+        out += EXAMPLES
+    return out
+
+
+def usage_error(*lines):
+    for ln in lines:
+        say(ln)
+    for ln in help_lines():
+        say(ln)
+    return 2
+
+
+def run(cmd):
+    """Run a command, or in a dry run only print it. Returns (code, text) or None for a dry run."""
+    if DRY:
+        say(" ".join(shlex.quote(c) for c in cmd))
+        return None
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return 127, str(e)
+    return p.returncode, (p.stdout or "") + (p.stderr or "")
+
+
+def systemctl(*args):
+    return run(["systemctl", "--user", *args])
+
+
+def docker(*args):
+    return run(["docker", *args])
+
+
+def docker_ok():
+    """True if the docker daemon answers. Never tries to start it."""
+    if DRY:
+        return True
+    r = docker("version", "--format", "{{.Server.Version}}")
+    return r[0] == 0
+
+
+def docker_down():
+    """Say once that docker does not answer. Nothing is said about the containers."""
+    global DOCKER_SAID
+    if not DOCKER_SAID:
+        say("Docker is not answering.")
+        DOCKER_SAID = True
+
+
+def d750_path():
+    return shutil.which("d750") or os.path.join(HOME, ".local", "bin", "d750")
+
+
+def first_line(res):
+    return res[1].strip().splitlines()[0] if res and res[1].strip() else ""
+
+
+def query_unit(svc):
+    """A user unit's true state: (active word, enabled word, hh:mm since, or None)."""
+    a = systemctl("is-active", svc["unit"])
+    e = systemctl("is-enabled", svc["unit"])
+    t = systemctl("show", svc["unit"], "-p", "ActiveEnterTimestamp", "--value")
+    if a is None:
+        return None
+    since = None
+    if t:
+        m = re.search(r"(\d\d):(\d\d):\d\d", t[1])
+        if m:
+            since = f"{m.group(1)}:{m.group(2)}"
+    return first_line(a) or "unknown", first_line(e) or "unknown", since
+
+
+def local_hm(iso):
+    """Docker's UTC start time to local hours and minutes."""
+    try:
+        t = datetime.datetime.strptime(iso[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=datetime.timezone.utc)
+        return t.astimezone().strftime("%H:%M")
+    except ValueError:
+        return None
+
+
+def query_container(svc):
+    """A container's true state, in the same words as a unit's. It is off at boot only while its off marker exists."""
+    r = docker("inspect", "-f", INSPECT, svc["container"])
+    if r is None:
+        return None
+    if r[0] != 0:
+        if "no such" in r[1].lower():
+            return "missing", "unknown", None
+        return "nodocker", "unknown", None             # the daemon did not answer: nothing true to say
+    parts = (first_line(r) + "|||").split("|")
+    status, health, started = parts[0], parts[1], parts[2]
+    if status == "running":
+        active = {"starting": "activating", "unhealthy": "unhealthy"}.get(health, "active")
+    elif status == "restarting":
+        active = "activating"
+    elif status in ("exited", "created", "dead"):
+        active = "inactive"
+    else:
+        active = status
+    off = marker_path(svc, "off")
+    enabled = "disabled" if off and os.path.exists(off) else "enabled"     # off at boot only with the off marker
+    return active, enabled, local_hm(started) if status == "running" else None
+
+
+def query(svc):
+    return query_container(svc) if svc["kind"] == "container" else query_unit(svc)
+
+
+def state_lines(svc, st, boot_always=False):
+    active, enabled, since = st
+    label = svc["label"]
+    if active == "active":
+        lines = [f"{label}: running since {since}." if since else f"{label}: running."]
+    elif active == "activating" and svc["waiting"]:
+        lines = [f"{label}: starting. {svc['waiting']}"]
+    else:
+        lines = [f"{label}: {STATE_WORDS.get(active, active)}."]
+    if enabled == "disabled":
+        lines.append(f"{label}: off at boot.")
+        if svc["kind"] == "container" and active in ("active", "activating", "unhealthy"):
+            lines.append(f"{label}: marker left. Use start to clear.")      # raised by hand: the timer still skips it
+    elif enabled == "enabled" and boot_always:
+        lines.append(f"{label}: on at boot.")
+    return lines
+
+
+def look(svc):
+    if svc["kind"] == "container":
+        say(f"Look: docker logs --tail 20 {svc['container']}")
+    else:
+        say(f"Look: journalctl --user -u {svc['unit']} -n 20")
+
+
+def check(svc, expect_up=None, expect_enabled=None, result=None):
+    """Say what is true. expect_up True/False, expect_enabled True/False or None. Returns True if as asked."""
+    if DRY:
+        return True
+    st = query(svc)
+    active, enabled, _ = st
+    if active == "nodocker":
+        docker_down()
+        return False
+    for ln in state_lines(svc, st, boot_always=expect_enabled is not None):
+        say(ln)
+    ok = True
+    if expect_up is True:
+        ok = active == "active" or (active == "activating" and svc["no_block"])
+    elif expect_up is False:
+        ok = active in ("inactive", "missing")
+    if expect_enabled is True and enabled != "enabled":
+        ok = False
+    if expect_enabled is False and enabled == "enabled":
+        ok = False
+    if not ok:
+        say(f"{svc['label']}: not as asked.")
+        if result and result[0] != 0 and result[1].strip():
+            say("It said: " + first_line(result)[:60])
+        look(svc)
+    return ok
+
+
+def ask_all(items, not_word):
+    """items: (warning, question) pairs. Say each warning and ask each question; True only if every answer is yes."""
+    if not items or DRY:
+        return True
+    for warn, question in items:
+        say(warn)
+        if YES:
+            continue
+        if not sys.stdin.isatty():
+            say("No terminal to ask on. Use --yes.")
+            say(f"Not {not_word}.")
+            return False
+        sys.stdout.write(question + " ")
+        sys.stdout.flush()
+        try:
+            answer = sys.stdin.readline()
+        except (OSError, ValueError):
+            answer = ""
+        if answer.strip().lower() not in ("y", "yes"):
+            if not answer.endswith("\n"):
+                say("")
+            say(f"Not {not_word}.")
+            return False
+    return True
+
+
+def confirm_start(targets):
+    return ask_all([(s["warn"], s["ask"]) for s in targets if s["warn"]], "started")
+
+
+def confirm_stop(targets):
+    return ask_all([(s["stop_warn"], s["stop_ask"]) for s in targets if s.get("stop_warn")], "stopped")
+
+
+def settle():
+    if not DRY and SETTLE:
+        time.sleep(SETTLE)
+
+
+def missing_image(svc):
+    """Say and return True if an image the compose file needs is not on the disk. Never pulls."""
+    r = docker("compose", "-f", svc["compose"], "config", "--images")
+    if r is None:
+        return False
+    if r[0] != 0:
+        say(f"{svc['label']}: the compose file did not read.")
+        say("It said: " + first_line(r)[:60])
+        return True
+    for image in r[1].split():
+        if docker("image", "inspect", image)[0] != 0:
+            say(f"{svc['label']}: image {image} is not on this disk.")
+            say("Nothing is pulled without internet.")
+            return True
+    return False
+
+
+def start_container(svc):
+    if DRY:
+        return docker("start", svc["container"])
+    st = query(svc)
+    if st is not None and st[0] == "nodocker":
+        docker_down()
+        return None
+    if st is not None and st[0] == "missing":
+        if missing_image(svc):
+            return None
+        return docker("compose", "-f", svc["compose"], "up", "-d", "--pull", "never")
+    return docker("start", svc["container"])
+
+
+def do_start(svc, enable=False):
+    res = None
+    if svc["kind"] == "container":
+        if not remove_markers(svc):                 # first, so the watchdog timer can never skip what was just raised
+            return False
+        res = start_container(svc)
+        if not DRY and res is None:                 # the image is missing: said already
+            return False
+    else:
+        if enable:
+            res = systemctl("enable", svc["unit"])
+        args = ["start"] + (["--no-block"] if svc["no_block"] else []) + [svc["unit"]]
+        res = systemctl(*args) or res
+    settle()
+    return check(svc, expect_up=True, expect_enabled=True if enable else None, result=res)
+
+
+def do_restart(svc):
+    notes = running_dependents(svc)
+    if svc["kind"] == "container":
+        st = None if DRY else query(svc)
+        if st is not None and st[0] == "nodocker":
+            docker_down()
+            return False
+        if st is not None and st[0] == "missing":
+            say(f"{svc['label']}: not created. Use start.")
+            return False
+        if not remove_markers(svc):                 # a restart raises it: first, so the timer never skips it
+            return False
+        res = docker("restart", svc["container"])
+    else:
+        args = ["restart"] + (["--no-block"] if svc["no_block"] else []) + [svc["unit"]]
+        res = systemctl(*args)
+    settle()
+    ok = check(svc, expect_up=True, result=res)
+    for n in notes:
+        say(n)
+    return ok
+
+
+def running_dependents(svc):
+    """Notes for the units that depend on svc and run now. Nothing in a dry run."""
+    if DRY:
+        return []
+    return [d["note"] for d in svc.get("dependents", []) if first_line(systemctl("is-active", d["unit"])) == "active"]
+
+
+def unkey_first(svc):
+    if DRY:
+        say("d750 ptt off")
+        return
+    st = query(svc)
+    if st[0] != "active":
+        say(f"{svc['label']}: not running. Nothing to unkey.")
+        return
+    say(f"{svc['label']}: unkeying first.")
+    res = run([d750_path(), "ptt", "off"])
+    if res[0] != 0:
+        say(f"{svc['label']}: could not unkey first.")
+
+
+def do_stop(svc, disable=False):
+    notes = running_dependents(svc)
+    if svc["unkey"]:
+        unkey_first(svc)
+    if svc["kind"] == "container":
+        kind = "off" if disable else "stop"
+        if not write_marker(svc, kind):             # first, so the timer can never undo the stop; no marker, no stop
+            return False
+        res = docker("stop", svc["container"])
+        ok = check(svc, expect_up=False, expect_enabled=False if disable else None, result=res)
+        if not ok and marker_path(svc, kind) and not DRY:
+            say(f"{svc['label']}: the {kind} marker is still there.")
+    else:
+        res = systemctl("stop", svc["unit"])
+        if disable:
+            res = systemctl("disable", svc["unit"]) or res
+        ok = check(svc, expect_up=False, expect_enabled=False if disable else None, result=res)
+    if svc.get("stop_note") and not DRY:
+        say(svc["stop_note"])
+    for n in notes:
+        say(n)
+    return ok
+
+
+def cmd_status(groups, headings):
+    for group, heading in HEADINGS:
+        if group not in groups:
+            continue
+        watched = TIMER is not None and TIMER["group"] == group
+        if not group_of(group) and not watched:
+            continue
+        if headings:
+            say(heading)
+        for svc in group_of(group):
+            st = query(svc)
+            if st is None:
+                continue
+            if st[0] == "nodocker":
+                docker_down()
+                continue
+            for ln in state_lines(svc, st):
+                say(ln)
+        if watched:                             # the safety net: said only when it is stopped or off at boot
+            t = query_unit(TIMER)
+            if t is not None and (t[0] != "active" or t[1] == "disabled"):
+                for ln in state_lines(TIMER, t):
+                    say(ln)
+    return 0
+
+
+def main(argv):
+    global DRY, YES
+    DRY = os.environ.get("STATION_DRY_RUN", "") not in ("", "0")
+    try:
+        load_settings()
+    except SettingsError as e:
+        say(f"Settings: {CONF_FILE}: {e}")
+        return 2
+    rest = []
+    for a in argv:
+        if a == "--dry-run":
+            DRY = True
+        elif a == "--yes":
+            YES = True
+        elif a.startswith("-") and a not in ("help",):
+            return usage_error(f"Not a known option: {a}")
+        else:
+            rest.append(a)
+    if not rest:
+        return usage_error("Say what to do.")
+    word = rest[0].lower()
+    if word == "help":
+        for ln in help_lines():
+            say(ln)
+        return 0
+    if word not in WORDS:
+        return usage_error(f"Not a known word: {rest[0]}")
+    if len(rest) > 2:
+        return usage_error("Too many words.")
+    if len(rest) == 1:
+        if word != "status":
+            return usage_error(f"{word} needs a name.")
+        name = None
+    else:
+        name = rest[1].lower()
+    if name in REFUSED:
+        say(REFUSED[name])
+        return 2
+    if name is None:
+        return cmd_status(["station", "network"], headings=True)
+    if name in GROUPS:
+        if word not in ("status", "start", "stop"):
+            return usage_error(f"{word} works on one name, not {name}.")
+        targets = group_of(GROUPS[name])
+    else:
+        svc = by_name(name)
+        if svc is None:
+            return usage_error(f"Not a known name: {rest[1]}")
+        targets = [svc]
+    if word == "status":
+        if name in GROUPS:
+            return cmd_status([GROUPS[name]], headings=False)
+        return _status_one(targets)
+    if any(s["kind"] == "container" for s in targets) and not docker_ok():
+        docker_down()                           # change nothing, not even the timer, and never start docker
+        return 1
+    if word in ("start", "restart", "on"):
+        if not confirm_start(targets):
+            return 1
+        ok = True
+        for svc in targets:                     # table order: the order of the sections in station.conf
+            if word == "start":
+                ok = do_start(svc) and ok
+            elif word == "on":
+                ok = do_start(svc, enable=True) and ok
+            else:
+                ok = do_restart(svc) and ok
+        return 0 if ok else 1
+    if not confirm_stop(targets):
+        return 1
+    ok = True
+    for svc in reversed(targets):               # stop and off: table order backwards
+        ok = do_stop(svc, disable=(word == "off")) and ok
+    return 0 if ok else 1
+
+
+def _status_one(targets):
+    for svc in targets:
+        st = query(svc)
+        if st is None:
+            continue
+        if st[0] == "nodocker":
+            docker_down()
+            continue
+        for ln in state_lines(svc, st):
+            say(ln)
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except KeyboardInterrupt:
+        say("Stopped by you.")
+        sys.exit(1)

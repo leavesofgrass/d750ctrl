@@ -1,0 +1,90 @@
+# station settings. Copy to ~/.config/d750ctrl/station.conf and edit. Lines starting with # are ignored.
+# With no station.conf at all, station uses the three services below, exactly as written here.
+#
+# One [service NAME] section per service. NAME is the word you type: station start NAME.
+# The order of the sections is the start order; stop and off go through them backwards.
+# Fields, all optional except what the kind needs:
+#   group = station or network. "station all" means the station group, "station network" the other one.
+#           all and network work with start, stop and status only. Default: station.
+#   kind = unit (a systemd user unit, the default) or container (docker, with its compose file).
+#   unit = the user unit's name, for kind = unit.
+#   container = the container's name, and compose = the path of its compose file, for kind = container.
+#   label = the words printed first on every line about it. Default: NAME.
+#   warn = said, and ask = asked, before a start. For a service that can transmit. Both or neither.
+#          Only y or yes starts it; anything else, or Enter, starts nothing.
+#   stop_warn = said, and stop_ask = asked, before a stop that cuts something off. Both or neither.
+#   stop_note = said after a stop.
+#   marker = a plain name. A container only: stop writes stop-NAME in $XDG_RUNTIME_DIR/station, off writes
+#            off-NAME in ~/.config/station, start removes both. A watchdog timer of yours can skip what they name.
+#   no_block = yes: do not wait for it to finish starting. Default: no.
+#   waiting = said while it is still starting.
+#   unkey = yes: run "d750 ptt off" before stopping it. A plain stop does not unkey the radio. Default: no.
+#   dependents = one line per unit that stops working while this one is down, as UNIT: note.
+#                If that unit is running, the note is said after a stop or restart.
+
+[service radio]
+group = station
+kind = unit
+unit = d750d.service
+label = Radio service
+unkey = yes
+dependents = xara.service: xara cannot key until it is back.
+
+[service xara]
+group = station
+kind = unit
+unit = xara.service
+label = xara
+no_block = yes
+waiting = Waiting for the radio's sound card.
+
+[service aprs]
+group = station
+kind = unit
+unit = d750-aprs.service
+label = APRS
+warn = Starting APRS can transmit.
+ask = Start APRS? No is the default
+
+# A container in the network group. Remove the # signs to use it.
+# [service web]
+# group = network
+# kind = container
+# container = web
+# compose = ~/containers/web/compose.yml
+# label = Web server
+# no_block = yes
+# waiting = Its health check is running.
+# marker = web
+# stop_note = Web server: the pages are gone until it is back.
+
+# A user unit in the network group, with a question before it is stopped.
+# [service sync]
+# group = network
+# kind = unit
+# unit = syncthing.service
+# label = Sync
+# stop_warn = Stopping Sync ends file sharing with your other computers.
+# stop_ask = Stop Sync? No is the default
+
+# [watch]: a timer of yours that brings containers back. station never starts, stops, enables or disables it.
+# station status names it under its group only while it is stopped or off at boot.
+# [watch]
+# name = web-up
+# unit = web-up.timer
+# label = web-up timer
+# group = network
+
+# [protect]: names station refuses, with the reason it says back. Use it for what you reach the computer by.
+# [protect]
+# sshd = sshd stays up. You reach this computer by it.
+# ssh = sshd stays up. You reach this computer by it.
+# networkmanager = NetworkManager stays up: it is the network.
+# docker = Docker stays up. The containers use it.
+
+# [help]: never_touched is said in station help; examples replace the examples there, one per line.
+# [help]
+# never_touched = sshd, NetworkManager, docker
+# examples = station status
+#     station stop xara
+#     station off web

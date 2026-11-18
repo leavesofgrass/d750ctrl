@@ -1,0 +1,10 @@
+[Unit]
+Description=Check d750d and the TM-D750 once a minute, for Uptime Kuma
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=60s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

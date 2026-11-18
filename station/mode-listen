@@ -1,0 +1,8 @@
+#!/bin/sh
+# mode-listen: tune band A to the NOAA weather voice, step through mode codes 0 1 2 3 for four seconds each
+# so the operator can hear what each one does, then put band A back. Use: mode-listen [MHZ]
+f=${1:-162.550}; hz=$(awk -v f="$f" 'BEGIN { printf "%010d", f * 1000000 + 0.5 }')
+fq=$(d750 raw "FQ 0" | cut -d, -f2); md=$(d750 raw "MD 0" | cut -d, -f2)
+echo "band A was $fq Hz mode $md; tuning to $f MHz"; d750 raw "FQ 0,$hz"; sleep 1; echo "signal: $(d750 raw 'BY 0') $(d750 raw 'SM 0')"
+for c in 0 1 2 3; do echo "$(date +%H:%M:%S) code $c"; d750 raw "MD 0,$c" >/dev/null; sleep 4; done
+d750 raw "MD 0,$md" >/dev/null; d750 raw "FQ 0,$fq" >/dev/null; echo "restored: $(d750 raw 'MD 0') $(d750 raw 'FQ 0')"
