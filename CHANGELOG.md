@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- The rig screen, the RTTY modem and radiogram still said MIT in their own headers and help text. They now say
+  GPL-2.0-or-later, as the project does. The README's License section no longer mentions the old license.
+
 ## 0.2.0-alpha.1, Tuesday, November 17, 2026
 
 - License: GNU General Public License, version 2 or later, from this change on. Version 0.1.0 and everything

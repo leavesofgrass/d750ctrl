@@ -73,7 +73,7 @@ message, or voice.
 
 It remembers: every addressee, place, station, signature and destination you use is offered next time,
 and Tab completes from them. Files: ~/.local/share/xarachat/radiograms/ (one file per message, traffic-log.txt),
-~/.config/xarachat/radiogram.conf (your defaults and what it has learned), addresses.txt beside it. MIT, 2026.
+~/.config/xarachat/radiogram.conf (your defaults and what it has learned), addresses.txt beside it. GPL-2.0-or-later, 2026.
 ```
 
 ## What it can do

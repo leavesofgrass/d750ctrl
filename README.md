@@ -110,9 +110,6 @@ your option) any later version. It is distributed in the hope that it will be us
 any warranty, without even the implied warranty of merchantability or fitness for a particular
 purpose. The full text is in [LICENSE](LICENSE).
 
-Version 0.1.0 and everything published before this change was released under the MIT license, and
-stays available under it.
-
 Some facts about the radio in these pages were first reported by the
 [kenwood project](https://github.com/swiftraccoon/kenwood), which is also under the GNU General
 Public License, version 2 or later. Each such fact is marked where it appears.

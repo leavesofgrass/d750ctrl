@@ -28,7 +28,7 @@ Each tool opens in a window of its own and keeps running while you tune. F9 brin
 back from any window, F12 steps through the windows, and the same letter jumps to a window that is
 already open. A tool's quit key (F10 in xarachat, Ctrl-Q in openslot) closes its window. Without tmux,
 or with --plain, a tool takes over the terminal and hands it back when it ends.
-Written Sunday, November 8, 2026. MIT.
+Written Sunday, November 8, 2026. GPL-2.0-or-later.
 """
 import argparse
 import os

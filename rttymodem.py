@@ -7,7 +7,7 @@
 
 Options: --baud 45.45|50|75, --shift 170|450|850, --mark 2125, --reverse (swap mark and space), --rate 48000.
 The decoder measures the energy at the mark and space tones over each bit time and reads the Baudot frame
-like a UART: one start bit, five data bits, one and a half stop bits. No external code. MIT, 2026."""
+like a UART: one start bit, five data bits, one and a half stop bits. No external code. GPL-2.0-or-later, 2026."""
 import argparse
 import math
 import sys
