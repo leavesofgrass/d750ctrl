@@ -157,7 +157,7 @@ def main():
         if len(a.args) != 1: print("usage: rttymodem.py rx IN.wav"); return 2
         samples, rate = read_wav(a.args[0]); kw["rate"] = rate
         print(decode(samples, **kw)); return 0
-    text = "CQ CQ DE KD7SWH KD7SWH K 73 TEST 12345 (NTS) ?"
+    text = "CQ CQ DE N0CALL N0CALL K 73 TEST 12345 (NTS) ?"
     clean = encode(text, **kw)
     rng = np.random.default_rng(1)
     noisy = clean + rng.normal(0, 0.25, len(clean)).astype(np.float32)

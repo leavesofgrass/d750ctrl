@@ -16,9 +16,9 @@ pass=0; fail=0
 echo "--- rtty ---"
 "$here/d750-rtty" rx 20 --source xl_modes.monitor --no-key > $T/rtty-rx.txt 2>&1 &
 rxpid=$!; sleep 2
-"$here/d750-rtty" tx "CQ CQ DE KD7SWH TESTING RTTY 73" --sink xl_modes --no-key | tail -1
+"$here/d750-rtty" tx "CQ CQ DE N0CALL TESTING RTTY 73" --sink xl_modes --no-key | tail -1
 wait $rxpid; rxout=$(cat $T/rtty-rx.txt)
-if echo "$rxout" | grep -q 'CQ CQ DE KD7SWH TESTING RTTY 73'; then pass=$((pass+1)); echo "Pass: rtty text came through the virtual sink"; else fail=$((fail+1)); echo "Fail: rtty: $rxout"; fi
+if echo "$rxout" | grep -q 'CQ CQ DE N0CALL TESTING RTTY 73'; then pass=$((pass+1)); echo "Pass: rtty text came through the virtual sink"; else fail=$((fail+1)); echo "Fail: rtty: $rxout"; fi
 echo "--- sstv ---"
 "$here/d750-sstv" rx 48 --source xl_modes.monitor --no-key > $T/sstv-rx.txt 2>&1 &
 rxpid=$!; sleep 2

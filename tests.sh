@@ -75,9 +75,9 @@ check "log keeps a refusal" "logged: cmd 'SQ 1,12' -> 'N'" logged "cmd 'SQ 1,12'
 check "log keeps a refused TX" "logged: refused 'TX'" logged "refused 'TX'" "$from"
 check "log keeps the GPS bytes sent unasked" "logged: unsolicited" logged "unsolicited" "$gps_from"
 check "vara status" "xara:" d750 vara status
-printf 'mycall = KD7SWH-7\n' > "$D750_CONF_DIR/d750ctrl.conf"
-check "vara cq dry run, VarAC CQ frame" "would send one VarAC cq frame through xara: CQFRAME KD7SWH" d750 -n vara cq
-check "vara beacon dry run, VarAC beacon frame" "CQFRAME KD7SWH-9" d750 -n vara beacon
+printf 'mycall = N0CALL-7\n' > "$D750_CONF_DIR/d750ctrl.conf"
+check "vara cq dry run, VarAC CQ frame" "would send one VarAC cq frame through xara: CQFRAME N0CALL" d750 -n vara cq
+check "vara beacon dry run, VarAC beacon frame" "CQFRAME N0CALL-9" d750 -n vara beacon
 check "doctor runs" "pass," d750 doctor
 # hamlib's NET rigctl client against the daemon: the open handshake, then reads and writes on the transmit band (B on the simulator)
 R="rigctl -m 2 -r 127.0.0.1:4542"

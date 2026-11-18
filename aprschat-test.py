@@ -72,28 +72,28 @@ threading.Thread(target=fake_daemon, daemon=True).start()
 time.sleep(0.2)
 
 # The history: conversations, our messages with their state, a part that is not ours ignored.
-event(dir="in", call="KD7SWH-7", id="1", text="hello from the window", via="rf")
-event(dir="out", call="KD7SWH-7", id="5", text="hi back", state="queued")
-event(dir="out", call="KD7SWH-7", id="5", state="sent", tries=1)
+event(dir="in", call="N0CALL-7", id="1", text="hello from the window", via="rf")
+event(dir="out", call="N0CALL-7", id="5", text="hi back", state="queued")
+event(dir="out", call="N0CALL-7", id="5", state="sent", tries=1)
 event(dir="in", call="W7XYZ", id="2", text="from the web", via="is")
 event(dir="out", call="NOBODY", id="99", state="acked")
 h = chat.History(MSG)
 h.poll()
-check("two conversations", sorted(h.conv), ["KD7SWH-7", "W7XYZ"])
-check("our message, sent once", (h.conv["KD7SWH-7"][1]["state"], h.conv["KD7SWH-7"][1]["tries"]), ("sent", 1))
-line = chat.entry_line(h.conv["KD7SWH-7"][1], "KD7SWH-7", "N0CALL-2")
+check("two conversations", sorted(h.conv), ["N0CALL-7", "W7XYZ"])
+check("our message, sent once", (h.conv["N0CALL-7"][1]["state"], h.conv["N0CALL-7"][1]["tries"]), ("sent", 1))
+line = chat.entry_line(h.conv["N0CALL-7"][1], "N0CALL-7", "N0CALL-2")
 check("our line says what became of it", line.split(" ", 1)[1], "N0CALL-2: hi back. Sent, try 1 of 5, waiting for the acknowledgement.")
 check("an internet message says so", chat.entry_line(h.conv["W7XYZ"][0], "W7XYZ", "X").split(" ", 1)[1],
       "W7XYZ: from the web (through the internet)")
-event(dir="out", call="KD7SWH-7", id="5", state="acked")
-check("an update comes back as one change", [(k, c) for k, c, _ in h.poll()], [("update", "KD7SWH-7")])
-check("acknowledged in words", chat.entry_line(h.conv["KD7SWH-7"][1], "KD7SWH-7", "X").endswith("hi back. Acknowledged."), True)
-check("call signs", [chat.valid_call(x) for x in ("kd7swh-7", "N0CALL", "hello", "W7X-16", "AB")],
-      ["KD7SWH-7", "N0CALL", None, None, None])
+event(dir="out", call="N0CALL-7", id="5", state="acked")
+check("an update comes back as one change", [(k, c) for k, c, _ in h.poll()], [("update", "N0CALL-7")])
+check("acknowledged in words", chat.entry_line(h.conv["N0CALL-7"][1], "N0CALL-7", "X").endswith("hi back. Acknowledged."), True)
+check("call signs", [chat.valid_call(x) for x in ("n0call-7", "N0CALL", "hello", "W7X-16", "AB")],
+      ["N0CALL-7", "N0CALL", None, None, None])
 
 # Line mode, as a screen reader would use it.
 env = dict(os.environ, HOME=tmp)
-p = subprocess.Popen([sys.executable, "-I", os.path.join(HERE, "aprschat.py"), "--line", "kd7swh-7"], env=env,
+p = subprocess.Popen([sys.executable, "-I", os.path.join(HERE, "aprschat.py"), "--line", "n0call-7"], env=env,
                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
 p.stdin.write("line mode test\n")
 p.stdin.flush()
@@ -101,10 +101,10 @@ time.sleep(1.5)
 p.stdin.write("/quit\n")
 p.stdin.flush()
 out = p.communicate(timeout=10)[0]
-check("line mode shows the conversation", "KD7SWH-7: hello from the window" in out, True)
-check("line mode sends", sent[-1], ("KD7SWH-7", "line mode test"))
-check("line mode says it was queued", "to KD7SWH-7: line mode test. Queued as" in out, True)
-check("line mode says the acknowledgement", "KD7SWH-7 acknowledged: line mode test" in out, True)
+check("line mode shows the conversation", "N0CALL-7: hello from the window" in out, True)
+check("line mode sends", sent[-1], ("N0CALL-7", "line mode test"))
+check("line mode says it was queued", "to N0CALL-7: line mode test. Queued as" in out, True)
+check("line mode says the acknowledgement", "N0CALL-7 acknowledged: line mode test" in out, True)
 
 # The screen, in a pseudo terminal: F2 and a call sign, a typed line, Enter, F10.
 pid, fd = pty.fork()
@@ -133,7 +133,7 @@ def keys(text, wait=0.8):
 
 
 pump(1.5)
-check("screen opens on the last conversation", b"with KD7SWH-7" in screen, True)
+check("screen opens on the last conversation", b"with N0CALL-7" in screen, True)
 keys("\x1bOQ")                      # F2
 check("F2 asks for a call sign", b"Station call sign" in screen, True)
 keys("w7xyz\r")
@@ -143,9 +143,9 @@ check("the screen sends", sent[-1], ("W7XYZ", "screen test"))
 # curses writes only what changes: "Waiting to go out." first, then "Acknowledged." over it.
 at = screen.find(b"screen test. Waiting to go out.")
 check("the screen shows it waiting, then acknowledged", at >= 0 and b"Acknowledged." in screen[at:], True)
-event(dir="in", call="KD7SWH-7", id="3", text="are you there", via="rf")
+event(dir="in", call="N0CALL-7", id="3", text="are you there", via="rf")
 pump(1.5)
-check("a message from another station is said", b"New message from KD7SWH-7: are you there" in screen, True)
+check("a message from another station is said", b"New message from N0CALL-7: are you there" in screen, True)
 keys("\x1b[21~", 1.0)               # F10
 try:
     os.waitpid(pid, 0)
