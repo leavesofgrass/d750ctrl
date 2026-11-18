@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0-alpha.1, Tuesday, November 17, 2026
 
 - License: GNU General Public License, version 2 or later, from this change on. Version 0.1.0 and everything
   published before it stays available under the MIT license.
