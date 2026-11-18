@@ -278,7 +278,7 @@ ptt) [ "${1:-}" = off ] || usage "ptt off"; r=$(tcp "$PTT_PORT" "T 0"); [ "$r" =
 
 doctor)
   ok=0; bad=0; p() { say "Pass: $*"; ok=$((ok + 1)); }; f() { say "Fail: $*"; bad=$((bad + 1)); }
-  lsusb -d 2166: 2>/dev/null | grep -q TM-D750 && p "radio on USB: $(lsusb -d 2166: | grep -oE 'ID 2166:[0-9a-f]{4}')" || f "radio not on USB"
+  lsusb -d 2166: 2>/dev/null | grep -q TM-D750 && p "radio on USB: $(lsusb -d 2166: | grep -oE 'ID 2166:[0-9a-f]{4}' | paste -sd' ' -)" || f "radio not on USB"
   [ -r /dev/d750-cat ] && p "/dev/d750-cat present, $(stat -L -c '%U:%G %a' /dev/d750-cat)" || f "/dev/d750-cat missing; cable, or the udev rule for this socket"
   systemctl --user is-active --quiet d750d.service 2>/dev/null && p "d750d running" || f "d750d not running"
   st=$(ask state); case "$st" in *"port open"*) p "daemon: $st";; ERR*) f "$st";; *) f "daemon: $st";; esac
