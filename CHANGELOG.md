@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The README has an honorable mention of the kenwood project, Rust libraries for Kenwood radios with one for
+  the TM-D750.
 - A tidier top folder. The tests and the pretend radio are in tests/, and the settings examples, the service
   templates and the udev rule are in config/. No program moved, so nothing installed changes: links and
   services keep working after a pull, with no need to run the installer again.

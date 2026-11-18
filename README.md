@@ -46,6 +46,14 @@ Everything else is in the [documentation](docs/README.md).
 - [Radio setup](docs/radio-setup.md): cables and the radio's menu settings.
 - [Recipes](docs/recipes.md): short how-tos.
 
+## Honorable mention
+
+[kenwood](https://github.com/swiftraccoon/kenwood), by swiftraccoon, is a set of Rust libraries and
+command line tools for Kenwood radios, with a library for controlling the TM-D750. If you want to
+build your own program for this radio, look there. Some facts about the radio in these docs were
+first reported by that project, and each is marked where it appears. It is a separate project with
+its own authors.
+
 ## License
 
 GNU General Public License, version 2 or later. See [LICENSE](LICENSE).
