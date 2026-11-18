@@ -95,8 +95,8 @@ The cabling is in [Quick start](docs/quickstart.md) and [Radio setup](docs/radio
 
 The tools are used with a real radio on CachyOS, an Arch Linux relative, daily with a screen reader
 and a Braille display. The automated tests run against the pretend radio on Ubuntu, Debian, Fedora
-and Arch. Debian and Fedora have not been tried with a real radio. Other distributions may need
-adjusting; see [Install](docs/install.md).
+and Arch. The installers have also been run by hand on Debian. Fedora has been tried only by the
+automated tests. Other distributions may need adjusting; see [Install](docs/install.md).
 To see what firmware your own radio reports, run `d750 doctor`.
 
 ## License

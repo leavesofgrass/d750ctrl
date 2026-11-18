@@ -185,7 +185,9 @@ d750d one.
 
 The owner uses the tools with a real radio on CachyOS, an Arch Linux relative. The automated tests
 run against the pretend radio on Ubuntu, Debian, Fedora and Arch, on GitHub. Only an Arch relative
-has been used with a real radio. These are the places where another system is likely to differ.
+has had the radio on it day to day. The owner has also run `install.sh` and
+`station/install-station.sh` by hand on Debian. These are the places where another system is likely
+to differ.
 
 What the automated tests install, which is a fact about the test machines and not a promise about
 yours, is this:

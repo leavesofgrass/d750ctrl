@@ -9,10 +9,10 @@ radio through [d750d](d750d.md), so the radio is unkeyed again when they finish.
 
 ## Before you start
 
-- **Transmitting with these two tools is fixed in this version and has not yet been proven on the
-  air.** Before, they keyed the radio and unkeyed it a few milliseconds later. It is proven only
-  against the pretend radio so far; see [What has been tested](what-has-been-tested.md). Listen
-  to the first transmissions, and keep `d750 ptt off` ready.
+- **Transmitting with these two tools was fixed in this version.** Before, they keyed the radio and
+  unkeyed it a few milliseconds later. After the fix, the author's transmit tests of both on the
+  air succeeded; see [What has been tested](what-has-been-tested.md). Listen to your own first
+  transmissions, and keep `d750 ptt off` ready.
 - **Both send commands transmit.** `d750-sstv tx` and `d750-rtty tx` key the radio and put audio on
   the air for as long as the picture or text takes. Check the frequency, mode and power, and that
   the channel is clear, before you run them.

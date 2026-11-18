@@ -31,6 +31,8 @@ what your firmware answers.
   d750-aprs cannot tell that from the computer. An iGate carries this station's beacon only now and
   then, so a beacon nobody carried proves nothing. d750-aprs says when the radio restarts and
   whether it hears again, and leaves transmitting to a real check.
+- By November 17, 2026, after thorough testing, the radio was transmitting after it restarted by
+  itself. The computer still has no way to know that on its own.
 
 ## Which command tells the transmit band
 
