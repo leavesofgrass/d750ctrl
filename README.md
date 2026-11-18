@@ -191,12 +191,17 @@ TX and RX commands and offers hamlib's protocol on its own port instead.
 ## Tests
 
     ./test-env.sh &                 the simulator and a second daemon on ports 4542 and 4543
-    ./tests.sh                      the verbs, 48 checks
-    python3 d750ctrl-test.py        the screen under a pseudo terminal, 18 checks
+    ./tests.sh                      the verbs, 78 checks
+    python3 d750ctrl-test.py        the screen under a pseudo terminal, 22 checks
     ./modes-test.sh                 RTTY and SSTV round trips over a virtual sink
     .venv/bin/python rttymodem.py selftest
     python3 -I d750-aprs-test.py    KISS, AX.25, APRS positions, Mic-E, messages, the plain lines and the
                                     restart notices, 182 checks
+    python3 -I aprschat-test.py     the chat, in line mode and on its screen, 18 checks
+
+The test daemon wants pyserial; tests.sh wants d750 on the path, plus nc and hamlib's rigctl.
+The four that need no sound device (tests.sh, d750ctrl-test.py, d750-aprs-test.py and aprschat-test.py)
+also run on GitHub on every push and pull request: .github/workflows/tests.yml.
 
 ## License
 
