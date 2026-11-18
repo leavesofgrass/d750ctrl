@@ -42,6 +42,8 @@ This is the index of every page. Each line says what the page answers.
 
 ## For people who change the code
 
+- [A map of the repository](repository-map.md): every file, what it is in one line, and the page that
+  explains it.
 - [Testing](testing.md): how do the simulator and the tests work, and how do I run them?
 - [Try it without a radio](try-without-a-radio.md): the simulator from a user's side, which is also
   the test bed.

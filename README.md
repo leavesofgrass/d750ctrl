@@ -85,6 +85,7 @@ The cabling is in [Quick start](docs/quickstart.md) and [Radio setup](docs/radio
 ## Learn more
 
 - [Documentation index](docs/README.md): every page, grouped.
+- [A map of the repository](docs/repository-map.md): every file and where it is explained.
 - [Recipes](docs/recipes.md): short how-tos for common tasks.
 - [Screen readers and Braille](docs/screen-readers.md): how the tools are built for them.
 - [Radio notes](docs/radio-notes.md): hard-won facts about the TM-D750.
