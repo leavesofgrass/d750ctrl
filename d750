@@ -280,7 +280,7 @@ doctor)
   ok=0; bad=0; p() { say "Pass: $*"; ok=$((ok + 1)); }; f() { say "Fail: $*"; bad=$((bad + 1)); }
   lsusb -d 2166: 2>/dev/null | grep -q TM-D750 && p "radio on USB: $(lsusb -d 2166: | grep -oE 'ID 2166:[0-9a-f]{4}')" || f "radio not on USB"
   [ -r /dev/d750-cat ] && p "/dev/d750-cat present, $(stat -L -c '%U:%G %a' /dev/d750-cat)" || f "/dev/d750-cat missing; cable, or the udev rule for this socket"
-  systemctl --user is-active --quiet d750d.service && p "d750d running" || f "d750d not running"
+  systemctl --user is-active --quiet d750d.service 2>/dev/null && p "d750d running" || f "d750d not running"
   st=$(ask state); case "$st" in *"port open"*) p "daemon: $st";; ERR*) f "$st";; *) f "daemon: $st";; esac
   id=$(ask ID); [[ $id == ID* ]] && p "radio answers $id" || f "radio does not answer ID: $id"
   fv=$(ask FV); ty=$(ask TY)  # firmware version and type: read only, and no failure if the radio keeps them to itself
@@ -290,10 +290,10 @@ doctor)
   tn=$(ask TN); [[ $tn == TN* ]] && p "tnc $(tnc_name "$(field "$(body "$tn")" 1)") on band $(band_letter "$(field "$(body "$tn")" 2)")"
   if [[ $tn == TN* ]] && [ "$(field "$(body "$tn")" 1)" != 0 ]; then b=$(field "$(body "$tn")" 2); sq=$(field "$(body "$(ask "SQ $b")")" 2); [ "$sq" != 0 ] && p "data band squelch $sq" || f "data band squelch is 0: the TNC will not transmit while menu 508 is on Busy"; fi
   src=$(radio_source); [ -n "$src" ] && p "sound card present" || f "sound card not present"
-  [ -n "$src" ] && { [ "$(pactl get-default-sink)" = "$(radio_sink)" ] && f "the radio is the default sound output" || p "radio is not the default sound output"; }
+  [ -n "$src" ] && { [ "$(pactl get-default-sink 2>/dev/null)" = "$(radio_sink)" ] && f "the radio is the default sound output" || p "radio is not the default sound output"; }
   if [ -n "$RADIO_MAC" ]; then timeout 10 bluetoothctl info "$RADIO_MAC" 2>/dev/null | grep -q 'Paired: yes' && p "Bluetooth paired" || f "Bluetooth not paired"; else say "note: no bluetooth address configured"; fi
   r=$(tcp "$PTT_PORT" t); [[ $r == 0 || $r == 1 ]] && p "PTT port answers, $([ "$r" = 1 ] && echo keyed || echo not keyed)" || f "PTT port: $r"
-  systemctl --user is-active --quiet xara.service && p "xara running" || say "note: xara not running"
+  systemctl --user is-active --quiet xara.service 2>/dev/null && p "xara running" || say "note: xara not running"
   say "$ok pass, $bad fail"; [ "$bad" = 0 ] ;;
 
 *) say "unknown verb: $cmd"; sed -n '2,46p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;

@@ -148,7 +148,7 @@ def failures_say_so(run):
     # error output is empty (doctor, raw, an unknown verb) must say it on a line of its output.
     if run.err_lines:
         if not run.err_lines[0].startswith(FAIL_WORDS):
-            return ["its first error line does not say why"], []
+            return [f"its first error line does not say why: {run.err_lines[0][:70]!r}"], []
         return [], []
     if not any(line.startswith(FAIL_WORDS) for line in run.out_lines):
         return ["no line says why it failed"], []
