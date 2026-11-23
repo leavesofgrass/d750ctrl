@@ -1096,6 +1096,35 @@ class Review(Frames):
         self.assertEqual(r.model.key("L", early=True), [sm.Set("lock")])
         self.assertEqual(r.model.mode, sm.MAIN)
 
+    def test_urgent_names_the_keys_of_unkey_and_lock(self):
+        face, listed = sized("face").model, sized("list").model
+        for key in ("U", "u", "L"):
+            self.assertTrue(face.urgent(key), key)
+        for key in ("U", "L"):
+            self.assertTrue(listed.urgent(key), key)
+        for key in ("u", "q", "Q", "y", "c", "enter", "ctrl-c", "esc", "1", "tab"):
+            self.assertFalse(listed.urgent(key), key)
+        for key in ("q", "Q", "y", "n", "c", "enter", "ctrl-c", "esc", "1", "tab", "x"):
+            self.assertFalse(face.urgent(key), key)
+        keymap = km.Keymap([(1, "unkey", "F5, k"), (2, "lock", "j")])
+        for view in ("face", "list", "compact"):
+            r = sized(view, keymap=keymap)
+            m = r.model
+            for mode_keys in ((), ("?",), (":",)):
+                if mode_keys:
+                    r.press(*mode_keys)
+                self.assertTrue(m.urgent("f5") and m.urgent("k") and m.urgent("j"), (view, mode_keys))
+                self.assertFalse(m.urgent("U") or m.urgent("L") or m.urgent("u"), (view, mode_keys))
+                r.press("esc")
+        r = sized("face", keymap=keymap)
+        r.press("c", "c")
+        self.assertTrue(r.model.urgent("k"))
+        self.assertEqual(r.model.key("k", early=True), [sm.Unkey()])
+        self.assertEqual((r.model.mode, r.model.message), (sm.MAIN, sm.NOTHING_SENT))
+        r.press("t")
+        self.assertEqual(r.model.key("j", early=True), [sm.Set("lock")])
+        self.assertEqual((r.model.mode, r.model.message), (sm.MAIN, "TNC unchanged."))
+
     def test_each_question_has_a_new_larger_number(self):
         r = sized("face")
         self.assertEqual(r.model.question, 0)

@@ -878,6 +878,10 @@ class ScreenModel:
         }[self.mode]
         return handler(name)
 
+    def urgent(self, name):
+        """True when the key is a key of unkey or lock in the wanted view's family, in any mode."""
+        return self.keymap.action(self.family, str(name)) in ("unkey", "lock")
+
     def _unkey_or_lock_anywhere(self, action):
         """The keys of unkey and lock in help, memory and a question: unkey is sent, and lock
         locks when the daemon is not locked. In a question they also answer no."""

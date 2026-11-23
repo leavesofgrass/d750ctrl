@@ -639,8 +639,8 @@ def rows_keep_the_rules(run, skip=()):
 # --------------------------------------------------------------------------- bookkeeping
 
 def answer(run, key):
-    """Answer a question as a person does: after its quiet time of 0.25 seconds."""
-    run.soak(0.4)
+    """Answer a question as a person does: after its quiet time of 0.5 seconds."""
+    run.soak(0.7)
     run.press(key)
 
 
@@ -804,7 +804,7 @@ def todays_run():
             run.press(key)
             try:
                 run.shows(f"{name}: r receive, s send", 39, 5)
-                run.soak(0.3)
+                run.soak(0.7)
                 run.press(ESC_KEY)
                 run.shows(f"{name}: nothing done.", 38, 5)
                 check(f"{key} offers the {name} menu, and Escape leaves it", True)
@@ -813,7 +813,7 @@ def todays_run():
             run.soak(0.3)
         # A send is asked last; n sends nothing, and the stub is never run with tx.
         run.press("S")
-        run.soak(0.4)
+        run.soak(0.7)
         run.press("s")
         try:
             run.shows("Picture file to send:", 39, 5)
@@ -830,7 +830,7 @@ def todays_run():
         run.soak(0.3)
         # A receive takes the terminal outside the workspace, and gives it back.
         run.press("R")
-        run.soak(0.4)
+        run.soak(0.7)
         run.press("r")
         try:
             run.shows("Seconds to listen, 60:", 39, 5)
@@ -1319,15 +1319,76 @@ def test_a_lock_is_tried_once_more_on_a_new_connection():
 
 def test_the_quiet_time():
     quiet = scr.QuietTime()
-    assert not quiet.early(0.0)
+    assert not quiet.early(0.0) and not quiet.key(0.0)
     assert quiet.seen(0, 0.0) is False
     assert quiet.seen(1, 1.0) is True, "a new question opens"
-    assert quiet.early(1.0) and quiet.early(1.24)
-    assert not quiet.early(1.25)
+    assert quiet.early(1.0) and quiet.early(1.49)
+    assert not quiet.early(1.5)
     assert quiet.seen(1, 1.1) is False, "the same question is not new"
     assert quiet.early(1.2), "the quiet time counts from the opening"
     assert quiet.seen(2, 2.0) is True and quiet.early(2.1), "the second frame question is new"
     assert quiet.seen(0, 2.1) is False and not quiet.early(2.15), "no question, no quiet time"
+    # A stream of keys, one every 30 milliseconds for a minute, is early to the last.
+    quiet.seen(3, 10.0)
+    assert all(quiet.key(10.0 + 0.03 * i) for i in range(1, 2001)), "a key in a stream was not early"
+    last = 10.0 + 0.03 * 2000
+    assert quiet.key(last + 0.49), "the quiet time starts again at each early key"
+    assert not quiet.key(last + 0.49 + 0.5), "half a second with no key ends it"
+
+
+class PretendWindow:
+    """Hands out key codes, as curses would, then -1 once none is pending."""
+
+    def __init__(self, codes):
+        self.codes = list(codes)
+        self.waits = []
+
+    def getch(self):
+        return self.codes.pop(0) if self.codes else -1
+
+    def nodelay(self, flag):
+        self.waits.append(("nodelay", flag))
+
+    def timeout(self, ms):
+        self.waits.append(("timeout", ms))
+
+
+class PretendModel:
+    """Says which keys are urgent, and keeps what it was given."""
+
+    def __init__(self, urgent=("U", "L", "u")):
+        self.urgent_keys = urgent
+        self.given = []
+
+    def urgent(self, name):
+        return name in self.urgent_keys
+
+    def key(self, name, early=False):
+        self.given.append((name, early))
+        return ["todo " + name]
+
+
+def test_draining_gives_only_unkey_and_lock():
+    codes = [ord(c) for c in "y\rUmpL"] + [curses.KEY_UP, 27, ord("["), ord("u"), ord("u")]
+    win, model, handed = PretendWindow(codes), PretendModel(), []
+
+    def hand(todos):
+        handed.extend(todos)
+        return False
+
+    assert scr.drain(win, scr.SequenceGuard(), model, hand, lambda: 1.0) is False
+    # The u after Escape and a bracket is the end of a broken sequence, dropped by the guard; the next acts.
+    assert model.given == [("U", True), ("L", True), ("u", True)], model.given
+    assert handed == ["todo U", "todo L", "todo u"], handed
+    assert win.codes == [] and win.waits == [("nodelay", True), ("timeout", scr.POLL)], win.waits
+
+    def quits(todos):
+        return True
+
+    model = PretendModel()
+    win = PretendWindow([ord("U"), ord("L")])
+    assert scr.drain(win, scr.SequenceGuard(), model, quits, lambda: 1.0) is True
+    assert model.given == [("U", True)] and win.waits[-1] == ("timeout", scr.POLL)
 
 
 def test_escdelay_default():
@@ -1402,7 +1463,7 @@ def test_a_paste_at_a_send_sends_nothing():
         before = len(stub_log())
         run.press("R")
         run.shows("RTTY: r receive, s send", 23, 5)
-        run.soak(0.4)
+        run.soak(0.7)
         run.press("s")
         run.shows("Text to send:", 23, 5)
         run.soak(0.4)
@@ -1432,6 +1493,59 @@ def test_a_paste_at_the_frame_sends_nothing():
         run.shows("Nothing sent.", 22, 5)
         run.soak(0.5)
         assert len(XARA.got) == before, XARA.got
+        run.quit_cleanly("Q")
+    finally:
+        run.end()
+
+
+def test_an_unkey_typed_ahead_of_a_question_is_kept():
+    run = _unlocked_face()
+    try:
+        t0 = time.monotonic()
+        run.press("RU")  # one write: the RTTY question opens, and the U behind it is drained, not lost
+        assert wait_until(lambda: run.ptt.first("T 0", t0) is not None, 3, 0.02), "the unkey never reached the PTT port"
+        answer(run, "n")
+        run.soak(0.5)
+        run.quit_cleanly("Q")
+    finally:
+        run.end()
+
+
+def test_a_stream_of_keys_never_answers_a_question():
+    run = _unlocked_face()
+    try:
+        before = ask("TN")
+        run.press("t")
+        run.wait_for(lambda: run.term.text(23).startswith("TNC to "), "the TNC question", 5)
+        end = time.monotonic() + 1.5
+        while time.monotonic() < end:
+            run.press("y")
+            run.soak(0.03)
+        run.soak(0.3)  # under the quiet time after the last y
+        assert run.term.text(23).startswith("TNC to "), f"the question went:\n{run.dump()}"
+        assert ask("TN") == before, f"the TNC changed: {ask('TN')}"
+        answer(run, "n")
+        run.shows("TNC unchanged.", 22, 5)
+        assert ask("TN") == before
+        run.quit_cleanly("Q")
+    finally:
+        run.end()
+
+
+def test_a_paste_after_typing_changes_nothing_more():
+    run = _unlocked_face()
+    try:
+        md, pc = ask("MD 0"), ask("PC 0")
+        t0 = time.monotonic()
+        run.press("146.52\rmp")  # one write: a frequency, its line end, and two face keys
+        assert wait_until(lambda: ask("FQ 0") == "FQ 0,0146520000"), "the frequency was not set"
+        run.soak(1.5)
+        assert (ask("MD 0"), ask("PC 0")) == (md, pc), "a key typed ahead changed the radio"
+        sets = [l for l in run.cmd.lines_since(t0) if l.startswith(("MD 0,", "PC 0,"))]
+        assert sets == [], sets
+        run.press("147.04\r")
+        assert wait_until(lambda: ask("FQ 0") == "FQ 0,0147040000")
+        run.soak(0.5)
         run.quit_cleanly("Q")
     finally:
         run.end()
@@ -1489,7 +1603,7 @@ def main():
     for fn in (test_sequence_guard, test_key_names, test_settings_are_chosen, test_the_looks_keep_red_and_green_out,
                test_carriers_never_raise_for_a_socket_fault, test_the_frame_is_sent_to_the_port_given,
                test_the_frames_port_comes_from_the_environment, test_a_lock_is_tried_once_more_on_a_new_connection,
-               test_the_quiet_time, test_escdelay_default, test_tool_arguments,
+               test_the_quiet_time, test_draining_gives_only_unkey_and_lock, test_escdelay_default, test_tool_arguments,
                test_check_with_no_terminal_and_no_daemon, test_help_and_bad_options,
                test_no_daemon_is_said_before_curses_starts):
         test(fn)
@@ -1503,7 +1617,9 @@ def main():
                    test_sigterm_puts_the_terminal_back, test_sighup_puts_the_terminal_back,
                    test_a_bug_puts_the_terminal_back_and_says_fail, test_a_signal_while_typing_puts_the_terminal_back,
                    test_escdelay_is_set_before_curses_starts, test_a_paste_at_a_send_sends_nothing,
-                   test_a_paste_at_the_frame_sends_nothing, test_the_first_lock_after_a_restart_is_kept):
+                   test_a_paste_at_the_frame_sends_nothing, test_the_first_lock_after_a_restart_is_kept,
+                   test_an_unkey_typed_ahead_of_a_question_is_kept, test_a_stream_of_keys_never_answers_a_question,
+                   test_a_paste_after_typing_changes_nothing_more):
             test(fn)
     finally:
         stop_test_bed(bed)
