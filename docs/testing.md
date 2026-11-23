@@ -69,6 +69,10 @@ D750_CMD_PORT=4543 D750_PTT_PORT=4542 d750 status
   list of open windows, both answers to the question when you quit with windows open, and that typed
   text reaches a tool whole and is never read by a shell. It uses only the tmux socket named `d750`,
   with the same stubs and the same test bed. When tmux is not installed it prints a note and passes.
+  It also sends a paste through tmux's own paste command, which marks it for a program that asked.
+- Pastes are covered in `tests/d750ctrl-test.py`, with and without the terminal's marks, on the pretend
+  terminal, and in `tests/d750ctrl-tmux-test.py`, in real tmux. Not tried: a paste from a real terminal
+  program over a real link.
 - `python3 -I tests/keymap-test.py`: which action each key means, in both families of keys, the
   `[keys]` rules and what is skipped. It needs no terminal, no daemon and no test bed.
 - `python3 -I tests/screen-model-test.py`: the rig screen's decisions, with no terminal: the frames

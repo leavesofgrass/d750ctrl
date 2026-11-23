@@ -96,6 +96,9 @@ Not tested:
 - **Colors on a real terminal.** The tests read the text on a pseudo terminal and the marks the model
   gives. They do not look at what a real terminal draws in `dark` or `blue`.
 - **The real radio.** The new screen has not been run against the TM-D750.
+- **A paste from a real terminal program over a real link.** The tests cover pastes with and without
+  the terminal's marks, on the pretend terminal, and in real tmux through its own paste command. A
+  real terminal program's paste has not been tried.
 - **A send, a CQ frame or a beacon from the new screen.** The questions are tested. The frame to xara
   goes to a port the test picked, and no send was finished.
 

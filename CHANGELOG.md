@@ -25,8 +25,15 @@
 - Changed: a question takes no answer in its first half second. A key that comes too soon is dropped, the
   question stays, and the message row says "Too fast. Answer again." A stream of keys, such as a paste,
   never answers a question, and keys typed ahead of a question, or right after Enter ends a typing line, are
-  thrown away, except the keys of unkey and lock. Still possible: a paste that pauses for half a second or
-  more and then has a small y could answer a send question.
+  thrown away, except the keys of unkey and lock.
+- New: bracketed paste. The screen asks the terminal to mark pastes: on at start, off on every way out and
+  while a tool has the terminal. A marked paste is never keys. In a typing line it is text (line ends become
+  spaces, Enter still applies, and the message row says "Pasted 14 characters. Enter applies."); anywhere
+  else it is dropped ("A paste was dropped."). It never answers a question, presses Enter or changes the
+  radio. An unkey key still unkeys while a paste is open, and Escape ends a paste that hangs. A terminal
+  that sends no marks pastes as keys, as before, and then the half second and the dropping of keys typed
+  ahead still stand. Still possible there: a paste that pauses for half a second or more and then has a
+  small y could answer a send question.
 - Changed: the keys of unkey and lock act in help, in the memory list and at every question. Each goes on a
   connection of its own and never waits behind a read, and a lock that fails is tried once more. A frame or
   a send is refused while the lock state is not known ("PTT state not read. Nothing sent."). Every way out

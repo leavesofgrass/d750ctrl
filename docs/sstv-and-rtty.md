@@ -153,9 +153,12 @@ the small letter `y` sends. Any other key says "Nothing sent." A send is refused
 again at the `y`, while PTT is locked or its state is not known ("PTT state not read. Nothing sent.").
 A question takes no answer in its first half second: a key that comes too soon is dropped, the
 question stays, and the message row says "Too fast. Answer again." A stream of keys, such as a paste,
-never answers a question, and keys typed ahead of a question are thrown away. One thing is left: a
-paste that pauses for half a second or more and then has a small `y` could still answer a send
-question. Do not paste into the screen.
+never answers a question, and keys typed ahead of a question are thrown away. The screen also asks
+the terminal to mark pastes. A paste that comes with its marks is never keys, so it cannot answer a
+question. In "Text to send:" it is text: pasting a line of RTTY text there is the supported way, and
+the message row says "Pasted 14 characters. Enter applies." The caveat is left only for a terminal
+that sends no marks, or a mark the link cuts from its text by more than a second: there a paste that
+pauses for half a second or more and then has a small `y` could still answer a send question.
 
 ## Settings
 

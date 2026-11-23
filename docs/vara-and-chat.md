@@ -130,8 +130,10 @@ refused while PTT is locked ("PTT is locked. Nothing sent.") or while the lock s
 ("PTT state not read. Nothing sent."). The first is also refused while `mycall` is empty or N0CALL
 ("Set mycall in the settings first."). A question takes no answer in its first half second: a key
 that comes too soon is dropped and the message row says "Too fast. Answer again." A stream of keys,
-such as a paste, never answers a question. One thing is left: a paste that pauses for half a second
-or more and then has a small `y` could still answer the question, so do not paste into the screen.
+such as a paste, never answers a question. The screen also asks the terminal to mark pastes, and a
+marked paste is never keys, so it cannot answer a question. The caveat is left only for a terminal
+that sends no marks, or a mark the link cuts from its text by more than a second: there a paste that
+pauses for half a second or more and then has a small `y` could still answer the question.
 If `D750_XARA_PORT` is set and is not a number, the frame is refused ("The frame's port is not a
 number.") and 8300 is not used instead.
 

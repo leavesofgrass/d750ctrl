@@ -27,6 +27,9 @@ These never change, and they mean the same in every view and every mode.
 - In the memory browser: Enter recalls the channel, capital `R` reads the channels again, and
   Escape or the memory key goes back.
 
+A paste that comes with the terminal's marks is not keys. In a typing line it is text, and
+elsewhere it is dropped with `A paste was dropped.` See [Pasting](d750ctrl.md#pasting).
+
 The keys of `unkey` and `lock` are special, because they stop transmitting:
 
 - They act in help, in the memory browser and at every question. At a question they also answer

@@ -110,9 +110,10 @@ logged once and then counted: one line a minute says "repeated N more times". Se
 - What you see: "Too fast. Answer again." in the message row, and the question stays.
 - Why: a question takes no answer in its first half second, and a stream of keys, such as a paste,
   never answers one. Keys typed ahead of a question are thrown away, except the keys of unkey and lock.
-- What to do: wait a moment, then press the small letter `y` once. Do not paste into the screen. One
-  thing is left: a paste that pauses for half a second or more and then has a small `y` could still
-  answer a send question.
+- What to do: wait a moment, then press the small letter `y` once. With a terminal that marks
+  pastes, a paste cannot answer a question. The caveat is left only for a terminal that sends no
+  marks, or a mark the link cuts from its text by more than a second: there a paste that pauses for
+  half a second or more and then has a small `y` could still answer a send question.
 - What you see: "PTT state not read. Nothing sent." when you start a frame or a send.
 - Why: the screen does not know yet whether PTT is locked, so it sends nothing.
 - What to do: wait for the next read, or check that d750d answers.
@@ -127,6 +128,29 @@ logged once and then counted: one line a minute says "repeated N more times". Se
   `d750 lock` again if you wanted the lock.
 - One more thing: an unkey and Ctrl+C that arrive in the same burst lose the unkey, because the
   terminal throws waiting keys away at Ctrl+C. Press unkey first, then quit.
+
+### "A paste was dropped."
+
+- What you see: "A paste was dropped." in the message row.
+- Why: the screen asks the terminal to mark pastes, and a marked paste is never keys. It is text
+  only in a typing line, such as "Text to send:". Anywhere else it is dropped, and it never answers a
+  question, never presses Enter and never changes the radio. In a typing line the message row says
+  "Pasted 14 characters. Enter applies.", or "some left out" when characters could not be typed. An
+  unkey key still unkeys while a paste is open, and Escape ends a paste that hangs.
+- What to do: open the typing line first, paste, then press Enter.
+
+### My terminal does not mark pastes
+
+- What you see: a paste into the main screen acts as keys, such as a tune or a question.
+- Why: the terminal sends no bracketed paste marks. Inside the tmux workspace, tmux passes the marks
+  only to a program that asked for them, and its own paste command marks a paste on that condition.
+  Without marks the half second wait and the dropping of keys typed ahead still stand.
+- What to do: type instead of pasting, or use a terminal that marks pastes.
+
+### After Ctrl+Z
+
+- After Ctrl+Z the shell sets its own paste mode. The screen does not handle Ctrl+Z. Quit the
+  screen with capital Q instead.
 
 ### Other software unkeys slowly
 

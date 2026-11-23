@@ -82,8 +82,13 @@ for how to pick one and [d750ctrl](d750ctrl.md) for the rest.
   opening the screen. It says "capital Q" and "capital V", so that Q and q do not sound alike.
 - **A question waits half a second.** A key that comes too soon is dropped, the question stays, and
   the message row says "Too fast. Answer again." A stream of keys, such as a paste, never answers a
-  question. One thing is left: a paste that pauses for half a second or more and then has a small y
-  could still answer a send question, so do not paste into the screen.
+  question. The screen also asks the terminal to mark pastes, on when it starts and off on every way
+  out and while a tool has the terminal. A marked paste is never keys: in a typing line it is text
+  ("Pasted 14 characters. Enter applies."), and anywhere else it is dropped ("A paste was dropped.").
+  It never answers a question, never presses Enter and never changes the radio. Pasting a line of
+  text into "Text to send:" is the supported way. The caveat is left only for a terminal that sends
+  no marks, or a mark the link cuts from its text by more than a second: there a paste that pauses
+  for half a second or more and then has a small y could still answer a send question.
 - **The keys of unkey and lock** act in help, in the memory list and at every question. A frame or a
   send is refused while PTT is locked or its state is not known.
 - **A window that is too small** shows one row that says so. The list needs 40 by 8, the compact view

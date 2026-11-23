@@ -138,15 +138,37 @@ Only the small letter `y` says yes to a question. A send question is the last st
 only key that can send. Sends are refused while PTT is locked, and while the lock state has not
 been read.
 
+### Pasting
+
+While the screen is up it asks the terminal to mark pastes. A paste that comes with its marks is
+never taken as keys:
+
+- In a typing line it is text. Line ends become spaces. Enter still applies it, and the paste never
+  presses Enter itself. The message row says how much came in, such as
+  `Pasted 14 characters. Enter applies.` When something was left out it says
+  `Pasted 14 characters, some left out.` An empty paste says `Nothing in the paste.`
+- Everywhere else it is dropped, and the message row says `A paste was dropped.` It never answers a
+  question and never changes the radio.
+- An unkey key still unkeys while a paste is open. Escape ends a paste that hangs.
+
+Pasting into a typing line is the supported way to enter long text, such as a line of RTTY text or a
+picture path.
+
+A terminal that sends no marks pastes as keys, as before. Then the half second below and the
+dropping of keys typed ahead still stand. The same is true when the link cuts a mark from its text
+by more than a second.
+
 ### The questions that ask before a change
 
 Each question sits on the bottom row. Only `y` says yes. Any other key says no, and the message row
 says what stayed.
 
 A question takes no answer in its first half second. A key that comes sooner is dropped, the
-question stays, and the message row says `Too fast. Answer again.` A stream of keys, such as a paste,
-keeps starting the half second again, so it never answers a question. One thing is left: a paste
-that pauses for half a second or more and then holds a small `y` could still answer.
+question stays, and the message row says `Too fast. Answer again.` A stream of keys keeps starting
+the half second again, so it never answers a question. With a terminal that marks pastes, a paste
+cannot answer at all. The one thing left is a terminal that sends no marks, or a mark the link cuts
+from its text by more than a second: a paste that then pauses for half a second or more and holds a
+small `y` could still answer.
 
 Keys typed ahead of a question, or right after Enter ends a typing line, are thrown away. The keys
 of unkey and lock are the exception, and still act. They also act in help, in the memory browser and
@@ -194,6 +216,7 @@ handed to xara.` If xara does not answer it says `Xara does not answer on port 8
   `Refused: TX can key or move the radio.`, `Refused: VOX lets the radio key itself.`,
   `Refused. The t key changes the TNC.`, `Refused. Capital L locks and unlocks.` and
   `Refused: quit is the daemon's own word.` A raw `VX 0`, which turns VOX off, is sent.
+- Pastes are marked by the terminal and never taken as keys. See [Pasting](#pasting).
 - A question takes no answer in its first half second, and keys typed ahead are thrown away. The
   keys of unkey and lock still act, in help, in the memory browser and at questions.
 - Messages no longer start with the time. The command log keeps the times.
