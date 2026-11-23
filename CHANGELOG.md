@@ -29,7 +29,9 @@
   more and then has a small y could answer a send question.
 - Changed: the keys of unkey and lock act in help, in the memory list and at every question. Each goes on a
   connection of its own and never waits behind a read, and a lock that fails is tried once more. A frame or
-  a send is refused while the lock state is not known ("PTT state not read. Nothing sent.").
+  a send is refused while the lock state is not known ("PTT state not read. Nothing sent."). Every way out
+  of the screen waits up to two seconds for an unkey or a lock that is still out, and says "Warn: unkey not
+  confirmed." or "Warn: lock not confirmed." when it was not answered.
 - Changed: a raw command may not turn VOX on or change the TNC. A `D750_XARA_PORT` that is not a number
   refuses the frame and never falls back to 8300.
 - The stacked face and the compact view say "Active." on the active band. Help rows and `--check` say

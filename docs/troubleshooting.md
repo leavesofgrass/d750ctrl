@@ -117,6 +117,17 @@ logged once and then counted: one line a minute says "repeated N more times". Se
 - Why: the screen does not know yet whether PTT is locked, so it sends nothing.
 - What to do: wait for the next read, or check that d750d answers.
 
+### The rig screen ends with "Warn: unkey not confirmed."
+
+- What you see: after you quit the rig screen, one or both of these lines, "Warn: unkey not confirmed."
+  and "Warn: lock not confirmed."
+- Why: you pressed unkey or lock just before you quit. On every way out the screen waits up to two
+  seconds for d750d to answer it, and d750d did not answer in that time.
+- What to do: run `d750 state` to see whether the radio is keyed and whether PTT is locked. Run
+  `d750 lock` again if you wanted the lock.
+- One more thing: an unkey and Ctrl+C that arrive in the same burst lose the unkey, because the
+  terminal throws waiting keys away at Ctrl+C. Press unkey first, then quit.
+
 ### Other software unkeys slowly
 
 - What you see: a program using Hamlib's own TH-D74 radio model takes seconds to unkey.
