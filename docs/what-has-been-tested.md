@@ -80,7 +80,8 @@ The rig screen was rebuilt with three views (list, face and compact), remappable
 
 - The decisions of every view, at many window sizes, with no terminal: `tests/screen-model-test.py` and
   `tests/keymap-test.py`. The screen itself, in a pseudo terminal against the pretend radio:
-  `tests/d750ctrl-test.py`. See [Testing](testing.md).
+  `tests/d750ctrl-test.py`. The tmux workspace, in a real tmux with stand-in tools:
+  `tests/d750ctrl-tmux-test.py`. See [Testing](testing.md).
 - These checks do not send anything. No test answers a send question with `y`.
 
 Not tested:
@@ -88,9 +89,10 @@ Not tested:
 - **Any view with speech or Braille.** Nobody has used the list, the face or the compact view with a
   screen reader or a Braille display yet. Where the cursor sits, and what the message row says, are
   decided from the written rules and checked only as text.
-- **The tmux workspace in the new code.** The tests run the screen with `--no-tmux`. The tool windows,
-  the keys that bind F9 and F12, and the question when you quit with windows open have not been run
-  through a real tmux in the new code.
+- **The tmux workspace on a real station.** `tests/d750ctrl-tmux-test.py` runs the workspace in a real
+  tmux with stand-in tools: the tool windows, the keys from `rig_key` and `next_key`, and the question
+  when you quit with windows open. It has not been run with the real chat, SSTV and RTTY programs, or
+  beside an operator's own tmux sessions on a station.
 - **Colors on a real terminal.** The tests read the text on a pseudo terminal and the marks the model
   gives. They do not look at what a real terminal draws in `dark` or `blue`.
 - **The real radio.** The new screen has not been run against the TM-D750.

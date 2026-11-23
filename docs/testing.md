@@ -63,6 +63,12 @@ D750_CMD_PORT=4543 D750_PTT_PORT=4542 d750 status
   test bed, so stop the one you started for `tests/tests.sh` first, as the GitHub workflow does. It
   sets `D750_XARA_PORT` to a port of its own and puts stubs for the chat, SSTV and RTTY programs first
   on the path. It never answers a send question with `y`.
+- `python3 tests/d750ctrl-tmux-test.py`: the rig screen's tmux workspace, in a real tmux. It starts
+  the screen without `--no-tmux` and checks the session and its `rig` window, a tool window with and
+  without a pause, going back to a window that is open, the keys from `rig_key` and `next_key`, the
+  list of open windows, both answers to the question when you quit with windows open, and that typed
+  text reaches a tool whole and is never read by a shell. It uses only the tmux socket named `d750`,
+  with the same stubs and the same test bed. When tmux is not installed it prints a note and passes.
 - `python3 -I tests/keymap-test.py`: which action each key means, in both families of keys, the
   `[keys]` rules and what is skipped. It needs no terminal, no daemon and no test bed.
 - `python3 -I tests/screen-model-test.py`: the rig screen's decisions, with no terminal: the frames
@@ -109,13 +115,14 @@ these docs was captured. See [Try it without a radio](try-without-a-radio.md).
 
 The workflow `.github/workflows/tests.yml` runs on every push and every pull request, on four
 distributions: Ubuntu, Debian, Fedora and Arch. Each job installs that distribution's packages for
-pyserial, netcat, Hamlib and procps (listed in [Install](install.md)), starts the test bed, and
+pyserial, netcat, Hamlib and procps (listed in [Install](install.md)) and tmux, starts the test bed, and
 runs:
 
 - `tests/tests.sh`, then it stops the test bed;
 - `tests/output-rules-test.py`, on a fresh test bed that it also stops afterwards;
 - `tests/keymap-test.py` and `tests/screen-model-test.py`;
 - `tests/d750ctrl-test.py`;
+- `tests/d750ctrl-tmux-test.py`, with tmux installed for it;
 - `tests/d750-aprs-test.py`;
 - `tests/aprschat-test.py`;
 - `station/station-test.py`;

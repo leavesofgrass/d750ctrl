@@ -119,6 +119,7 @@ All of these are explained on [Testing](testing.md).
 - `tests/tests.sh`: runs every verb against the pretend radio and checks the answers.
 - `tests/output-rules-test.py`: holds what the verbs print to written rules.
 - `tests/d750ctrl-test.py`: drives the rig screen in a pseudo terminal.
+- `tests/d750ctrl-tmux-test.py`: drives the rig screen's tmux workspace in a real tmux.
 - `tests/keymap-test.py`: the keys and the `[keys]` rules, with no terminal.
 - `tests/screen-model-test.py`: the three views, the questions and the safety rules, with no terminal.
 - `tests/fakedaemon.py`: a pretend daemon inside the test process, which the two model tests use.

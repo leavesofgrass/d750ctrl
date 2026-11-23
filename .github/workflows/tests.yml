@@ -26,28 +26,28 @@ jobs:
             install: >-
               apt-get update &&
               apt-get install -y --no-install-recommends
-              python3 python3-serial netcat-openbsd libhamlib-utils procps
+              python3 python3-serial netcat-openbsd libhamlib-utils procps tmux
           - name: Debian
             image: debian:stable
             install: >-
               apt-get update &&
               apt-get install -y --no-install-recommends
-              python3 python3-serial netcat-openbsd libhamlib-utils procps
+              python3 python3-serial netcat-openbsd libhamlib-utils procps tmux
           - name: Fedora
             image: fedora:latest
             install: >-
               dnf install -y
-              python3 python3-pyserial netcat hamlib procps-ng
+              python3 python3-pyserial netcat hamlib procps-ng tmux
           - name: Arch
             image: archlinux:latest
             install: >-
               pacman -Syu --noconfirm
-              python python-pyserial openbsd-netcat hamlib procps-ng
+              python python-pyserial openbsd-netcat hamlib procps-ng tmux
     defaults:
       run:
         shell: bash
     steps:
-      - name: Install pyserial for d750d, and what tests.sh calls (nc and hamlib's rigctl)
+      - name: Install pyserial for d750d, what tests.sh calls (nc and hamlib's rigctl), and tmux for the workspace test
         run: ${{ matrix.install }}
 
       - uses: actions/checkout@v7
@@ -81,6 +81,9 @@ jobs:
 
       - name: The rig screen, in a pseudo terminal (d750ctrl-test.py)
         run: python3 tests/d750ctrl-test.py
+
+      - name: The rig screen's tmux workspace, in real tmux (d750ctrl-tmux-test.py)
+        run: python3 tests/d750ctrl-tmux-test.py
 
       - name: APRS (d750-aprs-test.py)
         run: python3 -I tests/d750-aprs-test.py
