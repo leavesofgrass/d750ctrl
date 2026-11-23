@@ -21,7 +21,12 @@ This is the index of every page. Each line says what the page answers.
 
 - [d750d](d750d.md): what does the daemon do, and which ports and logs does it use?
 - [d750](d750.md): what does each verb of the command do?
-- [d750ctrl](d750ctrl.md): which keys does the rig screen take, and how do the tool windows work?
+- [d750ctrl](d750ctrl.md): what does the rig screen show, and how do the tool windows work?
+- [Choosing a view](choosing-a-view.md): which of the three views is for me, and how do I switch?
+- [The list view](list.md): one control a row, built for speech and Braille.
+- [The face view](face.md): both bands side by side, wide or stacked.
+- [The compact view](compact.md): three rows of facts.
+- [Keys and remapping](keys.md): which key does what, and how do I change a key?
 - [d750-aprs](aprs.md): how do I run APRS through the radio's TNC, as a beacon, iGate or digipeater?
 - [aprschat](aprschat.md): how do I send and read APRS messages from the terminal?
 - [d750-sstv and d750-rtty](sstv-and-rtty.md): how do I send or receive a picture or a line of text?

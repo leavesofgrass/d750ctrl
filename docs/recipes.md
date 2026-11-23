@@ -67,8 +67,9 @@ d750 unlock
 ```
 
 `d750 lock` unkeys the radio and makes d750d refuse every key request until you unlock.
-`d750 ptt off` unkeys the radio now. In the rig screen the letter L locks or unlocks and the letter
-u unkeys.
+`d750 ptt off` unkeys the radio now. In the rig screen capital L locks at once, and asks "Unlock PTT? y or n"
+before it unlocks. The letter u unkeys in the face and compact views, and capital U in every view.
+The screen's raw command line (the colon) refuses `lock` and `unlock`.
 
 ## Set the radio's clock
 

@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+- The rig screen has three views: the face (both bands, wide at 80 columns or more, stacked under that), a
+  list with one control on each row, built for speech and Braille, and a compact view of three rows. Start
+  in one with `--view NAME` or `view = NAME`; capital V goes to the next. Leaving the list asks first. A
+  window too small for a view says so in one row.
+- New settings: `view`, `theme` (dark, blue or mono), `digits` (big or plain), `live_meters` (here it sets
+  how often the busy lamps are read, by view) and `announce` (message or cursor). New options `--view`,
+  `--theme` and `--digits`. The environment variable `D750_XARA_PORT` names the port the CQ frame goes to,
+  8300 by default.
+- Keys can be changed in a `[keys]` section of d750ctrl.conf, with up to 4 keys for an action. Ctrl+C,
+  Ctrl+L, Escape, the digits and the period never change, and y and n are never given to an action.
+  `unkey` and `lock` always keep a key.
+- `d750ctrl --check` prints the settings in force, what it skipped, and every key, as plain lines, and
+  exits. It needs no daemon and no terminal.
+- Changed: the CQ or beacon frame takes two questions. `c` shows "Frame: c CQ, b beacon, n no", the second
+  key chooses, and only `y` sends. Pressing `c` twice used to send; now it sends nothing.
+- Changed: an SSTV or RTTY send asks "y or n" last, after the values. The last Enter used to send. Both
+  the frame and the sends are refused while PTT is locked, and the frame while `mycall` is empty or N0CALL.
+- Changed: capital L asks "Unlock PTT? y or n" before it unlocks. A raw command can no longer lock or
+  unlock, or send the daemon's own words quit and reconnect, and refuses more words that key or move the
+  radio. The first two letters decide.
+- Changed: messages no longer start with the time, and the daemon's state line no longer shows on the
+  message row. The first row says the status in words. The terminal's cursor is shown, and moves only when
+  the focus moves. The command log keeps the memory reads out.
+- Changed: `--plain` is now named `--no-tmux`, and the old name still works. `--ascii` now means
+  `--digits plain`: no large digits. The escape delay is 100 milliseconds, and a broken key sequence is
+  dropped and said.
+- The rig screen's code moved into the folder `d750ui/`, and `d750ctrl` is a launcher of a few lines. Three
+  tests with no terminal were added or reshaped: `tests/keymap-test.py`, `tests/screen-model-test.py` and
+  `tests/d750ctrl-test.py`, with `tests/fakedaemon.py` and `tests/showframe.py` beside them. The workflow runs
+  them. No view has been tried with speech or Braille yet.
+- New pages: choosing a view, the list, the face, the compact view and the keys.
+
 - The README has an honorable mention of the kenwood project, Rust libraries for Kenwood radios with one for
   the TM-D750.
 - A tidier top folder. The tests and the pretend radio are in tests/, and the settings examples, the service

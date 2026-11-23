@@ -10,7 +10,8 @@ connected by USB to a computer running CachyOS, which is a relative of Arch Linu
 and Braille displays were used in the testing. These have been used there, on the air:
 
 - The daemon, d750d, and the programs that key and tune the radio through it.
-- The verbs of `d750` and the rig screen, `d750ctrl`.
+- The verbs of `d750` and the rig screen, `d750ctrl`, as it was before the three views. The new screen
+  has not been run against the radio; see below.
 - `d750-aprs`: the beacon, the receive-only iGate, the fill-in digipeater and messages. It was
   tested extensively on the air for a full week before this version. Now and then something needed a
   hand, and every part works as expected.
@@ -71,6 +72,30 @@ These parts are new or changed, and have not yet had time on the air:
 
 The firmware line in `d750 doctor` is new too. It has been run once on the author's radio, where it
 printed firmware 1.03.
+
+## The rig screen's three views: not tried by a person yet
+
+The rig screen was rebuilt with three views (list, face and compact), remappable keys, themes and
+`--check`. Its code moved into `d750ui/`. The automated tests cover it, and nothing else does yet:
+
+- The decisions of every view, at many window sizes, with no terminal: `tests/screen-model-test.py` and
+  `tests/keymap-test.py`. The screen itself, in a pseudo terminal against the pretend radio:
+  `tests/d750ctrl-test.py`. See [Testing](testing.md).
+- These checks do not send anything. No test answers a send question with `y`.
+
+Not tested:
+
+- **Any view with speech or Braille.** Nobody has used the list, the face or the compact view with a
+  screen reader or a Braille display yet. Where the cursor sits, and what the message row says, are
+  decided from the written rules and checked only as text.
+- **The tmux workspace in the new code.** The tests run the screen with `--no-tmux`. The tool windows,
+  the keys that bind F9 and F12, and the question when you quit with windows open have not been run
+  through a real tmux in the new code.
+- **Colors on a real terminal.** The tests read the text on a pseudo terminal and the marks the model
+  gives. They do not look at what a real terminal draws in `dark` or `blue`.
+- **The real radio.** The new screen has not been run against the TM-D750.
+- **A send, a CQ frame or a beacon from the new screen.** The questions are tested. The frame to xara
+  goes to a port the test picked, and no send was finished.
 
 ## Not run automatically
 

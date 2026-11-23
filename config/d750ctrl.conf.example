@@ -17,3 +17,21 @@ workspace = yes
 # Keys tmux binds while the workspace runs: back to the rig screen, and step to the next window. tmux key names.
 rig_key = F9
 next_key = F12
+# The views and looks of the rig screen. Each line below is a comment, so a fresh install uses the defaults.
+# view: face (both bands side by side), list (one control a row, built for speech and Braille) or compact.
+# view = face
+# theme: dark, blue or mono (no color). A NO_COLOR variable that is not empty also means mono.
+# theme = dark
+# digits: big (large frequency digits, when the window is tall enough) or plain.
+# digits = big
+# live_meters: how often the busy lamps are read. auto reads them every busy_seconds in the wide face only;
+# yes does so in every view; no reads them with each full read. Older words on and off also work.
+# live_meters = auto
+# announce: message puts what changed in the message row; cursor leaves that row for refusals and events.
+# announce = message
+# Key changes go in a [keys] section, and it must be the last thing in the file. One line for each action:
+# the action's name, an equals sign, then up to 4 keys. d750ctrl --check lists the names and the keys in force.
+# [keys]
+# quit = Q
+# unkey = F5
+# act-power = P

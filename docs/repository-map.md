@@ -13,8 +13,9 @@ The radio's built-in packet modem, the TNC, has a serial port of its own. `d750-
 one.
 
 The programs are in the project's top folder, because installed links and services point at them
-there. Two folders hold what is not a program: `tests/` has the pretend radio and every test, and
-`config/` has the settings examples, the service templates and the udev rule.
+there. The rig screen's code is the exception: `d750ctrl` is a launcher, and its code is in the folder
+`d750ui/` beside it. Two other folders hold what is not a program: `tests/` has the pretend radio and
+every test, and `config/` has the settings examples, the service templates and the udev rule.
 
 The command line tools are thin: a short wrapper script starts a Python program of the same name.
 The tests never touch a radio. They run against `tests/d750-sim.py`, a pretend radio.
@@ -36,8 +37,17 @@ The tests never touch a radio. They run against `tests/d750-sim.py`, a pretend r
 ## The verbs and the rig screen
 
 - `d750`: the verbs, a bash script. Its opening comment is the help text. See [d750](d750.md).
-- `d750ctrl`: the full-screen rig control, in Python on curses. See [d750ctrl](d750ctrl.md).
-- `config/d750ctrl.conf.example`: the settings file for both, with every key. See
+- `d750ctrl`: a launcher of a few lines. It finds the folder `d750ui/` beside its real file, so the
+  link in `~/.local/bin` keeps working, and starts the screen. See [d750ctrl](d750ctrl.md).
+- `d750ui/`: the rig screen's code, in Python on curses. Importing it does nothing but define things.
+  - `d750ui/screen.py`: the thin part that touches the world: options, settings, `--check`, `--help`,
+    the tmux workspace, the sockets, the worker threads, the painter and the themes.
+  - `d750ui/screen_model.py`: every decision of the screen, with no curses, no socket and no clock.
+    It is given keys, times and answers, and returns things to do and frames.
+  - `d750ui/keymap.py`: which action a key means, the `[keys]` changes, and the help and key rows.
+  - `d750ui/lines.py`: the rules for a line of text, in code: 40 cells, plain words.
+  - `d750ui/__init__.py`: marks the folder as a package.
+- `config/d750ctrl.conf.example`: the settings file for the verbs and the screen, with every key. See
   [Settings](settings.md).
 - `probe.py`: asks the radio, read only, which commands it answers, and writes the table.
   `d750 probe` runs it. See [d750](d750.md) and [the radio reference](radio-reference.md).
@@ -109,6 +119,10 @@ All of these are explained on [Testing](testing.md).
 - `tests/tests.sh`: runs every verb against the pretend radio and checks the answers.
 - `tests/output-rules-test.py`: holds what the verbs print to written rules.
 - `tests/d750ctrl-test.py`: drives the rig screen in a pseudo terminal.
+- `tests/keymap-test.py`: the keys and the `[keys]` rules, with no terminal.
+- `tests/screen-model-test.py`: the three views, the questions and the safety rules, with no terminal.
+- `tests/fakedaemon.py`: a pretend daemon inside the test process, which the two model tests use.
+- `tests/showframe.py`: prints one frame of a view as plain lines, from the pretend daemon.
 - `tests/d750-aprs-test.py`: the APRS program's checks. Nothing in it opens a port or transmits.
 - `tests/aprschat-test.py`: the chat's checks, in line mode and on its screen.
 - `station/station-test.py`: the station tool, with fake services.

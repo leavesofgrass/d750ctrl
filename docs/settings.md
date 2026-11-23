@@ -52,11 +52,65 @@ Read by `d750`, by the [rig screen](d750ctrl.md), and by the tools that key the 
 - `status_seconds`: how often the rig screen reads everything, about 15 CAT commands. Not less than
   0.5. Default: `2`. Example: `status_seconds = 2`.
 - `busy_seconds`: how often it reads only the busy flags of both bands, 2 commands. Not less than
-  0.25. `0` reads them with the rest. Default: `1`. Example: `busy_seconds = 1`.
+  0.25. `0` reads them with the rest. Which views read them this often is up to `live_meters`
+  below. Default: `1`. Example: `busy_seconds = 1`.
 - `workspace`: `yes` runs the rig screen inside tmux with a window for each tool. `no`, `off`, `0`
-  or `false` runs everything in one terminal, like `d750ctrl --plain`. Default: `yes`.
+  or `false` runs everything in one terminal, like `d750ctrl --no-tmux`. Default: `yes`.
 - `rig_key`: the tmux key that returns to the rig screen. A tmux key name. Default: `F9`.
 - `next_key`: the tmux key that steps to the next window. Default: `F12`.
+
+### The rig screen's views and looks
+
+These settings are for the [rig screen](d750ctrl.md). Each has an option of the same name, and the
+option wins. A value the screen does not know is skipped and the default is used. When anything was
+skipped, the first message on the screen says "Settings skipped. Try d750ctrl --check". Run
+`d750ctrl --check` to see what is in force and what was skipped.
+
+- `view`: which view the screen starts in. `face` shows both bands side by side. `list` shows one
+  control a row, and is the view built for speech and Braille. `compact` shows three rows of facts.
+  See [Choosing a view](choosing-a-view.md). Default: `face`. Option: `--view NAME`. Example:
+  `view = list`.
+- `theme`: the colors of the face. `dark`, `blue` or `mono`. `mono` has no color. A set `NO_COLOR`
+  variable that is not empty also means `mono`, unless you give `--theme`. No theme uses red or
+  green, and color never carries a meaning alone. Default: `dark`. Option: `--theme NAME`.
+- `digits`: `big` draws the active band's frequency in large digits when the window is 17 rows or
+  more, and the band is read. `plain` never does. Default: `big`. Option: `--digits NAME`. The
+  older `--ascii` means `--digits plain`.
+- `live_meters`: how often the busy lamps are read. `auto` reads them every `busy_seconds` in the
+  wide face only, and with each full read in the list, the stacked face and compact. `yes` reads
+  them every `busy_seconds` in every view. `no` reads them with each full read in every view. The
+  older words `on`, `true` and `1` mean `yes`, and `off`, `false` and `0` mean `no`. Default: `auto`.
+- `announce`: where a change is told. `message` puts the focused row's line in the message row when
+  you move or change a value in the list, and the new frequency when you tune in the face and
+  compact. `cursor` leaves the message row for refusals, errors and events, so a screen reader that
+  follows the cursor is not told twice. Default: `message`.
+
+### The [keys] section
+
+A line `[keys]` in `d750ctrl.conf` starts a section. Every line after it is a key change, until
+another line in square brackets. Put the section last. A line in it is not a setting.
+
+- A line is `action = key, key`. It gives the action those keys, and takes them from any other
+  action. Up to 4 keys. `none` takes every key away, except from `unkey` and `lock`, which always
+  keep one.
+- Action names are the ones `d750ctrl --check` prints, such as `quit`, `unkey`, `lock`, `memory` and
+  `act-power`. Hyphens or underscores. The list view and the face have some different ones.
+- A key is a single printable character, or `tab`, `space`, `enter`, `up`, `down`, `left`, `right`,
+  `pgup`, `pgdn`, `home`, `end`, `backspace`, `comma` or `f1` to `f12`.
+- Never changed: Ctrl+C, Ctrl+L, Escape, the digits and the period. Never given to an action: `y`
+  and `n`, which only answer questions.
+- A line that cannot be used is skipped, and `d750ctrl --check` says which line and why.
+
+Examples. Every line is a comment in the example file.
+
+```text
+[keys]
+quit = Q
+unkey = F5
+act-power = P
+```
+
+Keys in a view are described on the [keys page](keys.md).
 
 ## aprs.conf
 
@@ -168,13 +222,17 @@ For the tools:
 
 - `D750_CONF_DIR`: the settings folder for `d750` and the rig screen. Default: `~/.config/d750ctrl`.
   The tests use a folder of their own. Example: `D750_CONF_DIR=/tmp/mytest d750 status`.
+- `D750_XARA_PORT`: the port the rig screen sends the CQ and beacon frame to. Default: `8300`. It
+  has no setting in the file. The tests point it at a port of their own.
+- `NO_COLOR`: when set and not empty, the rig screen uses the `mono` theme unless you give
+  `--theme`.
 - `D750_RELAY_PORT`: the relay's serial port for `d750-power`. See [d750-power and the
   relay](power-relay.md).
 - `APRSCHAT_MESSAGES`, `APRSCHAT_SOCK` and `APRSCHAT_STATE`: where aprschat reads the message
   history, talks to d750-aprs, and keeps its state. They exist for the tests.
 - `XDG_RUNTIME_DIR`: where d750-aprs puts its control socket, `d750-aprs.sock`. If it is not set,
   `~/.cache` is used.
-- `ESCDELAY`: how long curses waits after the Escape key. The rig screen sets it to 25 and aprschat
+- `ESCDELAY`: how long curses waits after the Escape key. The rig screen sets it to 100 and aprschat
   to 50 unless you set it.
 - `TMPDIR`: where `d750 level` and the tests make temporary files. Default: `/tmp`.
 
@@ -187,6 +245,7 @@ settings folder.
 - [d750d: the daemon](d750d.md)
 - [d750: the verbs](d750.md)
 - [d750ctrl: the rig screen](d750ctrl.md)
+- [Choosing a view](choosing-a-view.md) and [the keys](keys.md)
 - [d750-aprs](aprs.md)
 - [Station tools](station-tools.md)
 - [Testing](testing.md)

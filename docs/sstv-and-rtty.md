@@ -146,7 +146,11 @@ unkeyed`, and plays the rest of the audio without keying. Nothing more is transm
 command again after you find the cause; `d750 log` shows what d750d saw.
 
 On the [rig screen](d750ctrl.md), capital `S` and capital `R` ask whether to receive or send and
-then run these tools in a window of their own.
+then run these tools in a window of their own. A send asks for its values first, then shows what
+would go ("Picture pic.png, mode ROBOT 36." or the start of the text), and asks last: "Send the
+picture on band B? y or n", or "Send this text on band B? y or n", naming the transmit band. Only
+the small letter `y` sends. Any other key says "Nothing sent." A send is refused at its start, and
+again at the `y`, while PTT is locked.
 
 ## Settings
 

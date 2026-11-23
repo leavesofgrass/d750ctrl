@@ -33,7 +33,7 @@ each item. `d750 status` reads the radio.
 ## What is in it
 
 - [d750](docs/d750.md): plain commands to read and set the radio.
-- [d750ctrl](docs/d750ctrl.md): a full-screen rig control.
+- [d750ctrl](docs/d750ctrl.md): a full-screen rig control, with a face, a list and a compact view.
 - [d750-aprs](docs/aprs.md) and [aprschat](docs/aprschat.md): APRS and its messages.
 - [d750-sstv and d750-rtty](docs/sstv-and-rtty.md): pictures and text over the air.
 - [Station tools](docs/station-tools.md): small helpers for running a station computer.

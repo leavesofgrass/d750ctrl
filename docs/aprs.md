@@ -22,8 +22,8 @@ restart. The digipeater also needs transmit on, and it repeats nothing while tra
 ## Before you start
 
 - The TNC must be in KISS mode, a plain framing that carries packets between a TNC and a computer.
-  Set it with `d750 tnc kiss B` (mode 2 on band B), or from the [rig screen](d750ctrl.md) with the
-  letter `t`. `d750 fixup` keeps it that way after a power cycle.
+  Set it with `d750 tnc kiss B` (mode 2 on band B), or from the [rig screen](d750ctrl.md), in the
+  face or compact view, with the letter `t`. `d750 fixup` keeps it that way after a power cycle.
 - The radio's USB layout that works is menu 983 on USB (Main Unit) and menu 984 on USB (Panel). In
   KISS mode, KISS frames arrive on the base unit's USB port, which the udev rule names
   `/dev/d750-tnc` (USB id 2166:9032), and CAT keeps answering on the control head's port,

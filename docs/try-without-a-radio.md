@@ -70,12 +70,17 @@ before: band A 147.040 MHz
 after: band A 146.520 MHz
 ```
 
-Open the rig screen against it. `--plain` keeps the screen in this one terminal, which is how the
-tests run it:
+Open the rig screen against it. `--no-tmux` keeps the screen in this one terminal, which is how the
+tests run it. (`--plain` is the old name and still works.)
 
 ```sh
-d750ctrl --plain
+d750ctrl --no-tmux
 ```
+
+In the first minute, press capital `V` to step through the three views: the face, the compact view,
+and the list. Leaving the list asks first, and only `y` says yes. To start in a view, add
+`--view list`, `--view face` or `--view compact`. See [Choosing a view](choosing-a-view.md). To see
+the settings and keys the screen would use, with no terminal and no daemon, run `d750ctrl --check`.
 
 Read the daemon's own log of what you did. The test daemon logs to its own folder, so say so:
 

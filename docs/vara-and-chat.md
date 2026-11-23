@@ -121,8 +121,14 @@ any SSID you wrote is dropped, so `mycall = N0CALL-7` gives `CQFRAME N0CALL`, an
 One frame goes out for each command. xara and the radio decide the timing, and d750d's 30-second
 limit and the lock still apply. `d750 lock` stops xara from keying the radio.
 
-On the [rig screen](d750ctrl.md), the letter `c` does the same, in the same format. It asks first:
-`c` for a CQ, `b` for a beacon, `n` for nothing.
+On the [rig screen](d750ctrl.md), the letter `c` does the same, in the same format. It asks twice,
+and the only key that sends is the last `y`. First `c` shows "Frame: c CQ, b beacon, n no". Press
+`c` for a CQ or `b` for a beacon; any other key sends nothing. Then it asks "Send one CQ frame on
+band B? y or n", or the same for a beacon, naming the transmit band. Only the small letter `y`
+sends. Pressing `c` twice no longer sends: the second `c` only chooses the CQ. Both questions are
+refused while PTT is locked ("PTT is locked. Nothing sent."), and the first is also refused while
+`mycall` is empty or N0CALL ("Set mycall in the settings first."). In the list view the same
+thing is the row "Send a CQ or beacon frame", done with Enter.
 
 ### Chat
 
@@ -161,8 +167,9 @@ See the [settings page](settings.md).
   - **Why:** the xara service is stopped.
   - **What to do:** `systemctl --user start xara`.
 
-- **You see:** "xara not reachable on 8300" on the rig screen.
-  - **Why:** `c` could not connect to xara's command port.
+- **You see:** "Xara does not answer on port 8300." on the rig screen.
+  - **Why:** the frame could not be handed to xara's command port. The port in the message is
+    `D750_XARA_PORT`, 8300 by default.
   - **What to do:** start xara, and check `d750 vara status`.
 
 - **You see:** "Fail: no mycall in" your settings folder's file.

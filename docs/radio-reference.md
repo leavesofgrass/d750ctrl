@@ -535,8 +535,9 @@ Other menu numbers appear in the author's notes, not in the code. Each says wher
 - d750d unkeys at start-up, when a client drops while keyed, on serial errors, and after 30
   seconds of keying. Seen on the author's radio.
 - The rig screen used to poll about 29 commands a second and now polls about 10: it reads
-  everything every 2 seconds and the busy flags of both bands every second. Seen on the author's
-  radio.
+  everything every 2 seconds and the busy flags of both bands every second. By default only the wide
+  face reads the busy flags that often; the other views read them with the full read (see
+  `live_meters` in [Settings](settings.md)). Seen on the author's radio.
 - One early note records about 48 CAT commands a second from the screen and asks whether that hurt
   decoding. It was left open. Seen on the author's radio.
 - The probe waits 0.05 seconds between commands. Seen on the author's radio.

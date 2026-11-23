@@ -57,9 +57,20 @@ D750_CMD_PORT=4543 D750_PTT_PORT=4542 d750 status
   on the PATH, `nc` and `rigctl`. It uses a settings folder of its own, so your `fixup.conf` and
   your call sign stay out of it.
 - `python3 tests/d750ctrl-test.py`: the rig screen, under a pseudo terminal. It presses the
-  keys, and checks what the simulated radio ended up with and what the screen showed. It also counts
-  how often the screen reads the radio. It starts its own test bed, so stop the one you started for
-  `tests/tests.sh` first, as the GitHub workflow does.
+  keys, and checks what the simulated radio ended up with and what the screen showed: each view at
+  two window sizes, the cursor, the questions, `--check`, a `[keys]` section, a window that is too
+  small, and every way out. It also counts how often the screen reads the radio. It starts its own
+  test bed, so stop the one you started for `tests/tests.sh` first, as the GitHub workflow does. It
+  sets `D750_XARA_PORT` to a port of its own and puts stubs for the chat, SSTV and RTTY programs first
+  on the path. It never answers a send question with `y`.
+- `python3 -I tests/keymap-test.py`: which action each key means, in both families of keys, the
+  `[keys]` rules and what is skipped. It needs no terminal, no daemon and no test bed.
+- `python3 -I tests/screen-model-test.py`: the rig screen's decisions, with no terminal: the frames
+  of each view at many window sizes, the 40-cell line rule, the reading rates, every question, and the
+  safety rules, with a walk of random keys. It needs no terminal, no daemon and no test bed.
+- `python3 -I tests/showframe.py VIEW WIDTHxHEIGHT [KEY ...]`: not a test. It prints one frame of a
+  view as plain lines, from the pretend daemon in `tests/fakedaemon.py`, for the docs and for a look
+  with no terminal.
 - `tests/modes-test.sh`: RTTY and SSTV round trips over a virtual sound device. It makes a throwaway
   test picture, loads a null sound sink with `pactl`, sends RTTY text and an SSTV picture into it
   with `--no-key`, receives them back, and checks the text and the picture's mode. It takes more
@@ -103,6 +114,7 @@ runs:
 
 - `tests/tests.sh`, then it stops the test bed;
 - `tests/output-rules-test.py`, on a fresh test bed that it also stops afterwards;
+- `tests/keymap-test.py` and `tests/screen-model-test.py`;
 - `tests/d750ctrl-test.py`;
 - `tests/d750-aprs-test.py`;
 - `tests/aprschat-test.py`;
@@ -125,7 +137,7 @@ and the `.venv`.
 ## Settings
 
 The tests use these environment variables, and you can use them too: `D750_PORT`, `D750_PTT_PORT`,
-`D750_CMD_PORT`, `D750_LOG_DIR`, `D750_CONF_DIR`, `APRSCHAT_MESSAGES`, `APRSCHAT_SOCK` and
+`D750_CMD_PORT`, `D750_XARA_PORT`, `D750_LOG_DIR`, `D750_CONF_DIR`, `APRSCHAT_MESSAGES`, `APRSCHAT_SOCK` and
 `APRSCHAT_STATE`. They are described on the [settings page](settings.md).
 
 ## When something goes wrong

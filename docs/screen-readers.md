@@ -11,7 +11,8 @@ The tools were built for that first. Every fact below comes from what the code d
 - Exit code 0 is Pass, 1 is Fail, 2 is a usage mistake.
 - `-n` anywhere on a command is a dry run: it shows what would be sent and changes nothing.
 - `aprschat --line` prints one event per line and never redraws the screen.
-- The rig screen has `--ascii`, `--theme mono` and `--plain` for terminals that read better plain.
+- The rig screen has a list view, built for reading by speech and Braille, and `--check`, which
+  prints its settings and keys as plain lines. No view has been tried with speech or Braille yet.
 - The d750 verbs are the better fit for reading line by line. The rig screen is for operators who
   want the dials.
 
@@ -50,31 +51,60 @@ The tools were built for that first. Every fact below comes from what the code d
 
 ## The rig screen: d750ctrl
 
-The rig screen is a full-screen program, and it has three options for terminals that read better
-plain. See [d750ctrl](d750ctrl.md) for the keys.
+The rig screen is a full-screen program with three views. See [Choosing a view](choosing-a-view.md)
+for how to pick one and [d750ctrl](d750ctrl.md) for the rest.
 
-- `--ascii` draws the big frequency digits with plain characters instead of block characters. Block
-  characters often come out as noise on a Braille display. The band that is not active shows its
-  frequency in plain digits, and after you tune, the message line says the new frequency in plain
-  words.
-- `--theme mono` turns color off. The default theme is `dark`. In the mono theme the title bar and
-  the alarm lamps use reverse video instead of color.
-- `--plain` keeps the screen in this one terminal. Without it, and with tmux installed, the screen
-  opens its own tmux session and each tool gets a window. With `--plain`, or with `workspace = no`
-  in the settings, a tool takes over the terminal and hands it back when it ends.
+- **The list view is the one built for reading by speech and Braille.** Each row is one control and
+  starts with its name: "A frequency 147.040 MHz", "A squelch 6", "PTT unlocked". Words come first,
+  and rows are 40 cells or fewer. Start it with `d750ctrl --view list`, or set `view = list`.
+- **The cursor** is always shown, and it moves only when the focus moves. In the list it sits at the
+  start of the row in focus. In the compact view and the stacked face it sits at the start of the
+  active band's first row. In the wide face it sits on the active band's frequency. While you type or
+  answer a question it sits after the last character of the bottom row. In help and the memory list
+  it sits at the start of the row in focus.
+- **The message row** is the second row from the bottom. It is empty until something happens. It
+  holds the answer to what you did, and it never starts with the time. With `announce = message`, the
+  default, moving or changing a value in the list puts the focused row's line there. With
+  `announce = cursor` it holds only refusals, errors and events, for a screen reader that already
+  follows the cursor. In the face and compact views tuning follows `announce`, and every other change
+  is said in both modes, because its row is not at the cursor.
+- **The bottom row** is the hint, what you are typing, or a question. Only the small letter y says
+  yes to a question. Any other key says no, and the message row says what stayed.
+- **The top row** is the status in words: "d750ctrl. Receiving. Unlocked.", PTT locked,
+  TRANSMITTING, "No radio." or "No daemon."
+- **`live_meters`** sets how often the busy lamps are read. The default, `auto`, reads them often only
+  in the wide face. In the list, the stacked face and compact they are read with each full read, so a
+  row away from the cursor does not flicker under a screen reader. See [Settings](settings.md).
+- **`d750ctrl --check`** prints the settings in force, the lines it skipped and every key, one
+  fact a line, and exits. It needs no daemon and no terminal. Use it to read the keys without
+  opening the screen.
+- **A window that is too small** shows one row that says so. The list needs 40 by 8, the compact view
+  40 by 6, and the face 40 by 10 stacked or 80 by 12 wide.
+- **`--ascii` now means `--digits plain`**: no large digits.
+  Block characters in the digits often come out as noise on a Braille display, and the
+  list and compact views have none. Large digits show only in a window 17 rows tall or more.
+- **`--theme mono`** turns color off. `NO_COLOR` does the same. In the mono theme the alarm and the
+  lit cells use reverse video. The themes do not use red or green, and the list and compact views have
+  no color at all.
+- **`--no-tmux`** keeps the screen in this one terminal. Its old name, `--plain`, still works. It
+  does not change how the screen is drawn. Without it, and with tmux installed, the screen opens its
+  own tmux session and each tool gets a window. With `--no-tmux`, or with `workspace = no`, a tool
+  takes over the terminal and hands it back when it ends.
 - Color never carries meaning alone. A busy band says BUSY and a quiet one says quiet. A keyed radio
-  shows the word TRANSMIT, and a locked one PTT LOCKED. Squelch is a number and a bar of `#` and
-  `.`.
-- Every action prints a line of words in the message line, with the time. A refusal says so.
+  says TRANSMITTING, and a locked one says PTT locked. Squelch is a number.
 - Keys are named in words, and the question mark shows them all. The mouse is not used.
+- The keys can be changed in a `[keys]` section of the settings. See [Settings](settings.md).
 
 ## Tested and not tested
 
-- The owner tests with a screen reader and a Braille display every day. That is the real test.
-- The automated tests drive the rig screen under a pseudo terminal and check the text on it. They do
-  not run a screen reader.
-- Other screen readers, other terminals and other Braille displays have not been tested. If
-  something does not read well, please report it as a bug.
+- The owner uses a screen reader and a Braille display every day, and tested the first version of the
+  rig screen that way.
+- **No view of the new rig screen has been tried with speech or Braille yet.** The list, the face and
+  the compact view were checked only by the automated tests, which read the text on a pseudo
+  terminal and check each row against a 40-cell line rule. They do not run a screen reader.
+- Whether the cursor's place reads well, and whether `announce` should be `message` or `cursor` for
+  you, is not known yet. Please report what reads badly.
+- Other screen readers, other terminals and other Braille displays have not been tested.
 
 ## See also
 

@@ -108,6 +108,11 @@ near the bottom, and a message line below it. Press the question mark for help a
 quit. If tmux is installed, the screen opens inside its own tmux session, and the bottom line lists
 the tool windows you open. Details are on the [d750ctrl](d750ctrl.md) page.
 
+The screen has three views: the face you just saw, a list with one control on each row, and a compact
+view of three rows. Press capital `V` to go to the next one. From the list, a question comes first:
+`y` goes to the face, and any other key stays in the list. To start in a view, run
+`d750ctrl --view list`, or put `view = list` in `d750ctrl.conf`. See [Choosing a view](choosing-a-view.md).
+
 ## Your first five minutes
 
 With the radio answering, try these in order. None of them transmits.
