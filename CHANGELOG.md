@@ -22,6 +22,18 @@
 - Changed: capital L asks "Unlock PTT? y or n" before it unlocks. A raw command can no longer lock or
   unlock, or send the daemon's own words quit and reconnect, and refuses more words that key or move the
   radio. The first two letters decide.
+- Changed: a question takes no answer in its first half second. A key that comes too soon is dropped, the
+  question stays, and the message row says "Too fast. Answer again." A stream of keys, such as a paste,
+  never answers a question, and keys typed ahead of a question, or right after Enter ends a typing line, are
+  thrown away, except the keys of unkey and lock. Still possible: a paste that pauses for half a second or
+  more and then has a small y could answer a send question.
+- Changed: the keys of unkey and lock act in help, in the memory list and at every question. Each goes on a
+  connection of its own and never waits behind a read, and a lock that fails is tried once more. A frame or
+  a send is refused while the lock state is not known ("PTT state not read. Nothing sent.").
+- Changed: a raw command may not turn VOX on or change the TNC. A `D750_XARA_PORT` that is not a number
+  refuses the frame and never falls back to 8300.
+- The stacked face and the compact view say "Active." on the active band. Help rows and `--check` say
+  "capital Q" and the like, so that Q and q do not sound alike, and `--help` lists the steps.
 - Changed: messages no longer start with the time, and the daemon's state line no longer shows on the
   message row. The first row says the status in words. The terminal's cursor is shown, and moves only when
   the focus moves. The command log keeps the memory reads out.

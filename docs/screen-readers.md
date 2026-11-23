@@ -68,6 +68,8 @@ for how to pick one and [d750ctrl](d750ctrl.md) for the rest.
   `announce = cursor` it holds only refusals, errors and events, for a screen reader that already
   follows the cursor. In the face and compact views tuning follows `announce`, and every other change
   is said in both modes, because its row is not at the cursor.
+- **The active band** is named in the text: the stacked face and the compact view say "Active." at
+  the end of its row, and the wide face says "Band A. Active."
 - **The bottom row** is the hint, what you are typing, or a question. Only the small letter y says
   yes to a question. Any other key says no, and the message row says what stayed.
 - **The top row** is the status in words: "d750ctrl. Receiving. Unlocked.", PTT locked,
@@ -77,7 +79,13 @@ for how to pick one and [d750ctrl](d750ctrl.md) for the rest.
   row away from the cursor does not flicker under a screen reader. See [Settings](settings.md).
 - **`d750ctrl --check`** prints the settings in force, the lines it skipped and every key, one
   fact a line, and exits. It needs no daemon and no terminal. Use it to read the keys without
-  opening the screen.
+  opening the screen. It says "capital Q" and "capital V", so that Q and q do not sound alike.
+- **A question waits half a second.** A key that comes too soon is dropped, the question stays, and
+  the message row says "Too fast. Answer again." A stream of keys, such as a paste, never answers a
+  question. One thing is left: a paste that pauses for half a second or more and then has a small y
+  could still answer a send question, so do not paste into the screen.
+- **The keys of unkey and lock** act in help, in the memory list and at every question. A frame or a
+  send is refused while PTT is locked or its state is not known.
 - **A window that is too small** shows one row that says so. The list needs 40 by 8, the compact view
   40 by 6, and the face 40 by 10 stacked or 80 by 12 wide.
 - **`--ascii` now means `--digits plain`**: no large digits.

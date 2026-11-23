@@ -126,9 +126,14 @@ and the only key that sends is the last `y`. First `c` shows "Frame: c CQ, b bea
 `c` for a CQ or `b` for a beacon; any other key sends nothing. Then it asks "Send one CQ frame on
 band B? y or n", or the same for a beacon, naming the transmit band. Only the small letter `y`
 sends. Pressing `c` twice no longer sends: the second `c` only chooses the CQ. Both questions are
-refused while PTT is locked ("PTT is locked. Nothing sent."), and the first is also refused while
-`mycall` is empty or N0CALL ("Set mycall in the settings first."). In the list view the same
-thing is the row "Send a CQ or beacon frame", done with Enter.
+refused while PTT is locked ("PTT is locked. Nothing sent.") or while the lock state is not known
+("PTT state not read. Nothing sent."). The first is also refused while `mycall` is empty or N0CALL
+("Set mycall in the settings first."). A question takes no answer in its first half second: a key
+that comes too soon is dropped and the message row says "Too fast. Answer again." A stream of keys,
+such as a paste, never answers a question. One thing is left: a paste that pauses for half a second
+or more and then has a small `y` could still answer the question, so do not paste into the screen.
+If `D750_XARA_PORT` is set and is not a number, the frame is refused ("The frame's port is not a
+number.") and 8300 is not used instead.
 
 ### Chat
 

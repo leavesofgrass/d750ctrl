@@ -105,6 +105,18 @@ logged once and then counted: one line a minute says "repeated N more times". Se
   case is also what you get while the transmitter is locked.
 - What to do: use the proper PTT path. Run `d750 unlock` if you locked it on purpose.
 
+### The rig screen will not take my y
+
+- What you see: "Too fast. Answer again." in the message row, and the question stays.
+- Why: a question takes no answer in its first half second, and a stream of keys, such as a paste,
+  never answers one. Keys typed ahead of a question are thrown away, except the keys of unkey and lock.
+- What to do: wait a moment, then press the small letter `y` once. Do not paste into the screen. One
+  thing is left: a paste that pauses for half a second or more and then has a small `y` could still
+  answer a send question.
+- What you see: "PTT state not read. Nothing sent." when you start a frame or a send.
+- Why: the screen does not know yet whether PTT is locked, so it sends nothing.
+- What to do: wait for the next read, or check that d750d answers.
+
 ### Other software unkeys slowly
 
 - What you see: a program using Hamlib's own TH-D74 radio model takes seconds to unkey.

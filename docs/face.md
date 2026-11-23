@@ -20,7 +20,7 @@ This is the face at 40 columns and 10 rows or more. It is also what you get unde
 ```text
 d750ctrl. Receiving. Unlocked.
 A 147.040 MHz
-A FM, power high, VFO
+A FM, power high, VFO. Active.
 A squelch 6, quiet
 B 144.390 MHz. Control. Transmit.
 B FM, power mid, VFO
@@ -39,13 +39,13 @@ Row by row:
   locked.`, `TRANSMITTING.`, `No radio.` and `No daemon.`
 - Row 1: band A's frequency, then the tags it has: `A 147.040 MHz`, or `B 144.390 MHz. Control.
   Transmit.` A band that is not read says `A not read`.
-- Row 2: `A FM, power high, VFO`. In memory mode it ends with `memory 012` in place of `VFO`.
+- Row 2: `A FM, power high, VFO`, with `. Active.` added on the active band. In memory mode it says `memory 012` in place of `VFO`.
 - Row 3: `A squelch 6, quiet`, or `A squelch 6, BUSY`.
 - Rows 4 to 6: the same three rows for band B.
 - Row 7: `TNC KISS on B. GPS out off. VOX off.` A part that is not read is left out.
 - Then empty rows, the message row, and the bottom row.
 
-The stacked face does not say in words which band is active. The cursor sits at column 0 of the
+The active band says `Active.` at the end of its mode row. The cursor sits at column 0 of the
 active band's first row, and pressing Tab says the new band in the message row, such as
 `Band B. 144.390 MHz FM, power mid.`
 

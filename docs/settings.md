@@ -223,7 +223,8 @@ For the tools:
 - `D750_CONF_DIR`: the settings folder for `d750` and the rig screen. Default: `~/.config/d750ctrl`.
   The tests use a folder of their own. Example: `D750_CONF_DIR=/tmp/mytest d750 status`.
 - `D750_XARA_PORT`: the port the rig screen sends the CQ and beacon frame to. Default: `8300`. It
-  has no setting in the file. The tests point it at a port of their own.
+  has no setting in the file. The tests point it at a port of their own. If it is set and is not a
+  number, the frame is refused ("The frame's port is not a number.") and 8300 is never used instead.
 - `NO_COLOR`: when set and not empty, the rig screen uses the `mono` theme unless you give
   `--theme`.
 - `D750_RELAY_PORT`: the relay's serial port for `d750-power`. See [d750-power and the

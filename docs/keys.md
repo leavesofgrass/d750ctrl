@@ -27,6 +27,15 @@ These never change, and they mean the same in every view and every mode.
 - In the memory browser: Enter recalls the channel, capital `R` reads the channels again, and
   Escape or the memory key goes back.
 
+The keys of `unkey` and `lock` are special, because they stop transmitting:
+
+- They act in help, in the memory browser and at every question. At a question they also answer
+  no, and the question ends.
+- They do not act while you type a line. There they are just characters.
+- They act when the window is too small to show a view, and `lock` there only locks.
+- Keys typed ahead of a question, or right after Enter ends a typing line, are thrown away. The keys
+  of `unkey` and `lock` are the exception: they still act.
+
 ## Keys in every view
 
 These do the same thing in all three views. Two of them have other default keys in the list.
@@ -197,12 +206,12 @@ Keys in every view:
 other-band: Tab.
 help: Question mark.
 raw: Colon.
-view-next: V.
-quit in the list: Q.
-quit in the face: Q, q.
-unkey in the list: U.
-unkey in the face: U, u.
-lock: L.
+view-next: capital V.
+quit in the list: capital Q.
+quit in the face: capital Q, q.
+unkey in the list: capital U.
+unkey in the face: capital U, u.
+lock: capital L.
 memory: no key.
 sstv: Comma.
 rtty: F5.
@@ -235,15 +244,15 @@ Keys in every view:
 other-band: Tab.
 help: Question mark.
 raw: Colon.
-view-next: V.
-quit in the list: Q.
-quit in the face: Q, q.
-unkey in the list: U.
-unkey in the face: U, u.
-lock: L.
-memory: C, M.
-sstv: S.
-rtty: R.
+view-next: capital V.
+quit in the list: capital Q.
+quit in the face: capital Q, q.
+unkey in the list: capital U.
+unkey in the face: capital U, u.
+lock: capital L.
+memory: capital C, capital M.
+sstv: capital S.
+rtty: capital R.
 Keys in the list view:
 row-up: Up.
 row-down: Down.
@@ -280,11 +289,11 @@ radiogram: r.
 
 The lines read in three groups, as this page does: `Keys in every view:`, `Keys in the list view:`
 and `Keys in the face and compact views:`. An action that has other keys in each family is given
-twice, such as `quit in the list: Q.` and `quit in the face: Q, q.`
+twice, such as `quit in the list: capital Q.` and `quit in the face: capital Q, q.`
 
-A capital letter is said as the letter, so `view-next: V.` means capital `V`, and
-`quit in the face: Q, q.` means the capital first, then the small letter. A mark is said in words:
-`Question mark`, `Colon`, `Left bracket`, `Minus`, `Equals`.
+A capital letter is said with the word capital, as in `view-next: capital V.`, and a small letter is
+said as itself, so `quit in the face: capital Q, q.` is two keys. A mark is said in words:
+`Question mark`, `Colon`, `Left bracket`, `Minus`, `Equals`. Help rows say it the same way.
 
 The help screen is built from the same keys. Press the question mark on the screen to see the keys
 in force, one row for each action or pair. In the wide face, the key row above the message row lists

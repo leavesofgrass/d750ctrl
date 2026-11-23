@@ -150,7 +150,12 @@ then run these tools in a window of their own. A send asks for its values first,
 would go ("Picture pic.png, mode ROBOT 36." or the start of the text), and asks last: "Send the
 picture on band B? y or n", or "Send this text on band B? y or n", naming the transmit band. Only
 the small letter `y` sends. Any other key says "Nothing sent." A send is refused at its start, and
-again at the `y`, while PTT is locked.
+again at the `y`, while PTT is locked or its state is not known ("PTT state not read. Nothing sent.").
+A question takes no answer in its first half second: a key that comes too soon is dropped, the
+question stays, and the message row says "Too fast. Answer again." A stream of keys, such as a paste,
+never answers a question, and keys typed ahead of a question are thrown away. One thing is left: a
+paste that pauses for half a second or more and then has a small `y` could still answer a send
+question. Do not paste into the screen.
 
 ## Settings
 

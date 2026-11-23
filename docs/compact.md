@@ -16,7 +16,7 @@ A window of 40 by 6, the smallest the compact view shows, as the program draws i
 
 ```text
 d750ctrl. Receiving. Unlocked.
-A 147.040 MHz FM, high, quiet
+A 147.040 MHz FM, high, quiet. Active.
 B 144.390 MHz FM, mid, quiet
 Control B. Transmit B. TNC KISS on B.
 
@@ -29,7 +29,7 @@ bottom:
 
 ```text
 d750ctrl. Receiving. Unlocked.
-A 147.040 MHz FM, high, quiet
+A 147.040 MHz FM, high, quiet. Active.
 B 144.390 MHz FM, mid, quiet
 Control B. Transmit B. TNC KISS on B.
 
@@ -47,7 +47,7 @@ Cursor: row 1, column 0.
 
 - Row 0: the status row, such as `d750ctrl. Receiving. Unlocked.` The other states are `PTT
   locked.`, `TRANSMITTING.`, `No radio.` and `No daemon.`
-- Row 1: band A: `A 147.040 MHz FM, high, quiet`. The state at the end is `quiet` or `BUSY`. A band
+- Row 1: band A: `A 147.040 MHz FM, high, quiet`, then `. Active.` on the active band. The state is `quiet` or `BUSY`. A band
   that is not read says `A not read`.
 - Row 2: band B, the same way.
 - Row 3: `Control B. Transmit B. TNC KISS on B.`
@@ -56,7 +56,7 @@ Cursor: row 1, column 0.
 - The bottom row: the hint, the line you are typing, or a question. The hint is `Tab band. Up, Down
   tune. V view. ? help`.
 
-The view does not say in words which band is active. The cursor sits on the active band's row, and
+The active band's row ends with `Active.` The cursor sits on that row, and
 pressing Tab says the new band in the message row, such as `Band B. 144.390 MHz FM, power mid.`
 
 ## Keys
