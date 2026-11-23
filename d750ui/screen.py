@@ -5,9 +5,13 @@ to the worker threads through queues, and paints the frame the model gives. Curs
 called on the main thread only. One worker does the daemon's command port and the tmux
 calls. Unkey and Set("lock") each run in a short thread of their own, on a fresh
 connection, so that neither waits behind a sweep, a memory read or each other. Keys typed
-ahead of a question, or after typing ends, are drained: only unkey and lock act on them. carry() is the one place a thing to
-do meets a socket, and has no curses in it. A tool that takes the terminal runs on the
-main thread.
+ahead of a question, or after typing ends, are drained: only unkey and lock act on them.
+carry() is the one place a thing to do meets a socket, and has no curses in it. A tool
+that takes the terminal runs on the main thread.
+
+Keys are read in bursts: one key, then every key ready with no waiting. PasteGuard finds
+the marks of a bracketed paste in them, so that a paste is never keys: it goes to the
+model as text, which keeps it in a typing line and drops it everywhere else.
 
 Every way out puts the terminal back as it was: quit, Ctrl+C, SIGTERM, SIGHUP and a bug,
 which then prints one line starting "Fail:" and exits 1. The tmux workspace is ended
@@ -431,6 +435,7 @@ def run_here(win, todo):
         return "missing"
     curses.def_prog_mode()
     curses.endwin()
+    paste_mode(False)  # the tool gets the terminal with bracketed paste off
     try:
         print(f"\nRunning {todo.name}. This screen comes back when it ends.", flush=True)
         subprocess.call(argv)
@@ -448,6 +453,7 @@ def run_here(win, todo):
         curses.reset_prog_mode()
         win.clear()
         win.refresh()
+        paste_mode(True)  # the screen has the terminal back
     return "ran"
 
 
@@ -536,6 +542,226 @@ class SequenceGuard:
             self.count = 0
             return None, True
         return code, False
+
+    def forget(self):
+        """Clear what is remembered of the last Escape: it was the start of a paste, not a key."""
+        self.escape_at = None
+
+
+# --------------------------------------------------------------------------- pastes
+
+PASTE_ON = b"\x1b[?2004h"  # bracketed paste on: the terminal marks what is pasted
+PASTE_OFF = b"\x1b[?2004l"
+START_MARK = tuple(ord(c) for c in "[200~")  # after an Escape: a paste starts
+END_MARK = tuple(ord(c) for c in "[201~")  # after an Escape: the paste ends
+MARK_SECONDS = 1.0  # a mark cut by the link must go on within this
+PASTE_SECONDS = 2.0  # a paste with no end mark ends when this passes with nothing more
+PASTE_MOST = 4096  # characters kept of a paste
+BURST_MOST = 65536  # codes read in one burst
+LINE_ENDS = (9, 10, 13)  # a tab, a line end or a carriage return becomes one space
+
+
+def paste_mode(on, fd=None):
+    """Bracketed paste on or off: the bytes go straight to the terminal's own descriptor, never
+    through curses. A write that fails is passed over."""
+    try:
+        os.write(sys.stdout.fileno() if fd is None else fd, PASTE_ON if on else PASTE_OFF)
+    except (OSError, ValueError):
+        pass
+
+
+def paste_text(codes):
+    """The text of a paste and whether anything was left out but spaces and line ends."""
+    out = []
+    left_out = False
+    for code in codes:
+        if code in LINE_ENDS:
+            code = 32
+        if 32 <= code <= 126:
+            if code == 32 and (not out or out[-1] == " "):
+                continue
+            out.append(chr(code))
+        else:
+            left_out = True
+    text = "".join(out).strip(" ")
+    if len(text) > PASTE_MOST:
+        text = text[:PASTE_MOST].rstrip(" ")
+        left_out = True
+    return text, left_out
+
+
+def _is_prefix(seen, mark):
+    return len(seen) < len(mark) and tuple(seen) == mark[: len(seen)]
+
+
+class PasteGuard:
+    """Finds the marks of a bracketed paste in the bursts of codes curses gives. No clock, no curses.
+
+    take(codes, now) is given each burst; poll(now) is called on every pass of the loop. Both
+    return items, in order: ("key", code, at) for a key that came at at; ("paste", text, left_out) for a whole
+    paste; ("late", code) for each code of an open paste that came in a later burst than its
+    start mark, so that the loop can still unkey.
+
+    An Escape that ends a burst is a key at once; when the next burst, within a second, starts
+    with the rest of a start mark, the paste starts there. The characters of a mark the link
+    cut are held until the next burst says what they are; after a second they go on as keys,
+    or, inside a paste, as its text. Inside a paste, an Escape that ends a burst ends the
+    paste and then acts as a key, and a paste with no end mark ends after two quiet seconds.
+    """
+
+    def __init__(self):
+        self.bursts = 0
+        self.open = False  # inside a paste
+        self.codes = []  # the codes of the open paste
+        self.left_out = False  # an Escape was left out of the open paste
+        self.opened_in = 0  # the burst the open paste started in
+        self.last_at = None  # when the open paste last had a code
+        # ([(code, when it came)] of a start mark seen after an Escape key, when the Escape came)
+        self.start_seen = None
+        self.end_seen = None  # (the part of an end mark seen after an Escape, inside a paste, when)
+        self.end_drop = None  # (the part of an end mark still to drop, when): after an Escape ended a paste
+
+    # ----------------------------------------------------------------- what is held
+
+    def _release_start(self, items):
+        """The held characters of a start mark that did not go on: keys, for the key guard."""
+        seen, _at = self.start_seen
+        self.start_seen = None
+        items.extend(("key", code, at) for code, at in seen)  # each with its own time, for the key guard
+
+    def _release_end(self):
+        """The held characters of an end mark that did not go on: text of the paste, its Escape left out."""
+        seen, _at = self.end_seen
+        self.end_seen = None
+        self.left_out = True
+        self.codes.extend(seen)
+
+    def _give(self, items):
+        """End the open paste and give it."""
+        if self.end_seen is not None:
+            self._release_end()
+        text, left_out = paste_text(self.codes)
+        items.append(("paste", text, left_out or self.left_out))
+        self.open = False
+        self.codes = []
+        self.left_out = False
+        self.last_at = None
+
+    def _start(self, now):
+        self.open = True
+        self.codes = []
+        self.left_out = False
+        self.opened_in = self.bursts
+        self.last_at = now
+
+    # ----------------------------------------------------------------- the two calls
+
+    def take(self, codes, now):
+        codes = list(codes)
+        self.bursts += 1
+        items = self.poll(now)
+        i, n = 0, len(codes)
+        # What the burst before left held.
+        if self.end_drop is not None and i < n:
+            rest, _at = self.end_drop
+            self.end_drop = None
+            got = tuple(codes[: len(rest)])
+            if got == rest:
+                i = len(rest)
+            elif got == rest[: len(got)] and len(got) == n:
+                self.end_drop = (rest[n:], now)
+                return items
+        if self.start_seen is not None and i < n:
+            seen, at = self.start_seen
+            want = START_MARK[len(seen) :]
+            got = tuple(codes[i : i + len(want)])
+            if got == want:
+                self.start_seen = None
+                i += len(want)
+                self._start(now)
+            elif got == want[: len(got)] and i + len(got) == n:
+                self.start_seen = (seen + [(c, now) for c in got], at)
+                return items
+            else:
+                self._release_start(items)
+        if self.open and self.end_seen is not None and i < n:
+            seen, _at = self.end_seen
+            want = END_MARK[len(seen) - 1 :]
+            got = tuple(codes[i : i + len(want)])
+            if self.bursts > self.opened_in:
+                items.extend(("late", code) for code in got if got == want[: len(got)])
+            if got == want:
+                self.end_seen = None
+                i += len(want)
+                self._give(items)
+            elif got == want[: len(got)] and i + len(got) == n:
+                self.end_seen = (seen + list(got), self.end_seen[1])
+                self.last_at = now
+                return items
+            else:
+                self._release_end()
+        while i < n:
+            code = codes[i]
+            if not self.open:
+                if code == ESC:
+                    after = tuple(codes[i + 1 : i + 1 + len(START_MARK)])
+                    if after == START_MARK:
+                        self._start(now)
+                        i += 1 + len(START_MARK)
+                        continue
+                    items.append(("key", code, now))
+                    if i + 1 + len(after) == n and _is_prefix(after, START_MARK):
+                        # the mark may go on in the next burst
+                        self.start_seen = ([(c, now) for c in after], now)
+                        return items
+                    i += 1
+                    continue
+                items.append(("key", code, now))
+                i += 1
+                continue
+            # Inside a paste.
+            late = self.bursts > self.opened_in
+            self.last_at = now
+            if code == ESC:
+                after = tuple(codes[i + 1 : i + 1 + len(END_MARK)])
+                if after == END_MARK:
+                    if late:
+                        items.extend(("late", c) for c in (code, *after))
+                    i += 1 + len(END_MARK)
+                    self._give(items)
+                    continue
+                if i + 1 == n:
+                    if late:
+                        items.append(("late", code))
+                    self._give(items)  # an Escape that ends a burst ends the paste, then acts
+                    items.append(("key", code, now))
+                    self.end_drop = (END_MARK, now)
+                    return items
+                if i + 1 + len(after) == n and _is_prefix(after, END_MARK):
+                    if late:
+                        items.extend(("late", c) for c in (code, *after))
+                    self.end_seen = ([code, *after], now)
+                    return items
+                if late:
+                    items.append(("late", code))
+                self.left_out = True  # an Escape inside a paste is left out of its text
+                i += 1
+                continue
+            if late:
+                items.append(("late", code))
+            self.codes.append(code)
+            i += 1
+        return items
+
+    def poll(self, now):
+        items = []
+        if self.start_seen is not None and now - self.start_seen[1] > MARK_SECONDS:
+            self._release_start(items)
+        if self.end_drop is not None and now - self.end_drop[1] > MARK_SECONDS:
+            self.end_drop = None
+        if self.open and self.last_at is not None and now - self.last_at > PASTE_SECONDS:
+            self._give(items)
+        return items
 
 
 LIT = "#"  # a lit cell of the big digits, the squelch bar or the busy history, in the frame's row
@@ -733,25 +959,63 @@ class QuietTime:
         return early
 
 
-def drain(win, guard, model, hand, now):
-    """Read every key that is pending, without waiting. Each goes through the key guard and
-    key naming as usual; the model gets only those for which model.urgent(name) is True, as
-    early keys, and the rest are dropped. True when a thing to do was Quit."""
+def read_burst(win, first=None):
+    """The codes ready with no waiting, after first when given: at most BURST_MOST. Resize codes
+    are taken out. (codes, True when a resize came). The window is left waiting POLL again."""
+    codes = [] if first is None else [first]
+    resized = False
     win.nodelay(True)
     try:
-        while True:
+        while len(codes) < BURST_MOST:
             code = win.getch()
             if code == -1:
-                return False
+                break
             if code == curses.KEY_RESIZE:
+                resized = True
                 continue
-            code, _broken = guard.take(code, now())
-            name = None if code is None else key_name(code)
-            if name is not None and model.urgent(name):
-                if hand(model.key(name, early=True)):
-                    return True
+            codes.append(code)
     finally:
         win.timeout(POLL)
+    return codes, resized
+
+
+def late_unkey(code, model, hand):
+    """A code of a paste still open, from a later burst: a key of unkey unkeys at once."""
+    name = key_name(code)
+    if name is not None and model.unkeys(name):
+        return hand(model.unkey_now())
+    return False
+
+
+def drain(win, guard, model, hand, now, paste=None, items=None):
+    """Drain typed-ahead keys: first the items left in the burst in hand, then every key that is
+    ready, read with no waiting through the same paste guard. A key goes through the key guard
+    and key naming as usual; the model gets only those for which model.urgent(name) is True,
+    as early keys, and the rest are dropped. A paste goes to model.paste. True when a thing to
+    do was Quit."""
+    paste = paste or PasteGuard()
+    pending = items if items is not None else []
+
+    def one(item):
+        if item[0] == "paste":
+            guard.forget()
+            return hand(model.paste(item[1], item[2]))
+        if item[0] == "late":
+            return late_unkey(item[1], model, hand)
+        code, _broken = guard.take(item[1], item[2])  # the key guard gets the time the code came
+        name = None if code is None else key_name(code)
+        if name is not None and model.urgent(name):
+            return hand(model.key(name, early=True))
+        return False
+
+    while True:
+        while pending:
+            if one(pending.pop(0)):
+                return True
+        codes, _resized = read_burst(win)
+        if not codes:
+            return False
+        pending.extend(paste.take(codes, now()))
 
 
 URGENT_WAIT_SECONDS = 2.0  # how long a way out waits, in all, for an unkey or lock still out
@@ -820,17 +1084,44 @@ class Keys:
     or to 0, and whenever a key ends typing: only unkey and lock act on them.
     """
 
-    def __init__(self, win, model, hand, quiet=None, guard=None, clock=time.monotonic):
+    def __init__(self, win, model, hand, quiet=None, guard=None, clock=time.monotonic, paste=None):
         self.win = win
         self.model = model
         self.hand = hand
         self.quiet = quiet or QuietTime()
         self.guard = guard or SequenceGuard()
         self.clock = clock
+        self.paste = paste or PasteGuard()
+        self.items = []  # what is left of the burst in hand
         self.question = 0
 
     def drain(self):
-        return drain(self.win, self.guard, self.model, self.hand, self.clock)
+        """Drain: the rest of the burst in hand first, then what curses has ready."""
+        return drain(self.win, self.guard, self.model, self.hand, self.clock, self.paste, self.items)
+
+    def burst(self, codes, now):
+        """A burst the loop read, at now. True when a thing to do was Quit."""
+        self.items.extend(self.paste.take(codes, now))
+        return self._run()
+
+    def poll(self, now):
+        """On every pass of the loop: a mark or a paste that time has settled."""
+        self.items.extend(self.paste.poll(now))
+        return self._run()
+
+    def _run(self):
+        while self.items:
+            item = self.items.pop(0)
+            if item[0] == "key":
+                done = self.key(item[1], self.clock(), item[2])  # the quiet time asks the clock now
+            elif item[0] == "paste":
+                self.guard.forget()
+                done = self.hand(self.model.paste(item[1], item[2])) or self.watch()
+            else:
+                done = late_unkey(item[1], self.model, self.hand) or self.watch()
+            if done:
+                return True
+        return False
 
     def watch(self):
         """Drain when the question changed since last seen. True when a thing to do was Quit."""
@@ -843,9 +1134,9 @@ class Keys:
             if self.drain():
                 return True
 
-    def key(self, code, now):
-        """One key curses read, at now. True when a thing to do was Quit."""
-        code, broken = self.guard.take(code, now)
+    def key(self, code, now, at=None):
+        """One key curses read, handled at now; at is when it came, for the key guard. True when a thing to do was Quit."""
+        code, broken = self.guard.take(code, now if at is None else at)
         if broken:
             self.model.note(BROKEN)
         name = None if code is None else key_name(code)
@@ -903,13 +1194,23 @@ def _loop(win, model, common, urgent, results, look, ports, ending):
     model.size(width, height)
     if hand(model.start()) or watch():
         return 0
+    pasting = False
     while True:
         last = paint(win, model, look, last, redraw)
         redraw = False
+        if not pasting:
+            paste_mode(True)  # after the first paint
+            pasting = True
         code = win.getch()
         if code == curses.KEY_RESIZE:
             redraw = True
-        elif code != -1 and keys.key(code, time.monotonic()):
+            code = -1
+        if code != -1:
+            codes, resized = read_burst(win, code)
+            redraw = redraw or resized
+            if codes and keys.burst(codes, time.monotonic()):
+                return 0
+        if keys.poll(time.monotonic()):
             return 0
         while True:
             try:
@@ -969,6 +1270,7 @@ def _session(model, ports, theme, ending):
             termios.tcsetattr(fd, termios.TCSADRAIN, saved)
         except termios.error:
             pass
+        paste_mode(False)  # on every way out, after the terminal is put back
         for kind in urgent.wait():  # no way out loses an unkey or a lock still out: 2 seconds at most
             print(f"Warn: {kind} not confirmed.", file=sys.stderr, flush=True)
         common.stop()

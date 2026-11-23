@@ -8,7 +8,7 @@ model's tests do.
 
 VIEW is list, face or compact. Each KEY is a key's name as the model takes it (down,
 tab, V, m, enter, esc, space ...), or `tick` for one second passing, or `type:TEXT` to
-press each character of TEXT. Options before VIEW: --digits plain, --live yes,
+press each character of TEXT, or `paste:TEXT` for a paste of TEXT with its marks. Options before VIEW: --digits plain, --live yes,
 --announce cursor. The rows are printed as they are, an empty row as an empty line,
 then one line saying where the cursor is.
 
@@ -50,7 +50,7 @@ def main(argv=None):
             for ch in key[5:]:
                 radio.run(radio.model.key("space" if ch == " " else ch))
         else:
-            radio.run(radio.model.key(key))
+            radio.press(key)
         radio.model.size(width, height)
     frame = radio.model.frame(width, height)
     for row in frame.rows:

@@ -62,6 +62,15 @@ def asks(todos, why=None):
     return [t for t in todos if isinstance(t, sm.Ask) and (why is None or t.why == why)]
 
 
+def differs_only_in_message(before, after, height):
+    """Two frames the same but for the message row, the second from the bottom."""
+    if (before.cursor, before.focus_row, before.marks) != (after.cursor, after.focus_row, after.marks):
+        return False
+    if len(before.rows) != len(after.rows):
+        return False
+    return all(b == a for i, (b, a) in enumerate(zip(before.rows, after.rows)) if i != height - 2)
+
+
 class Frames(unittest.TestCase):
     """The rules every frame keeps."""
 
@@ -1001,6 +1010,24 @@ class Safety(Frames):
             for t in first:
                 self.assertTrue(isinstance(t, allowed) or t == sm.Set("lock"), (key, t))
 
+    def walk_paste(self, r, rng, width, height):
+        """A paste in the walk: no thing to do ever; outside typing, nothing but the message changes."""
+        m = r.model
+        text = "".join(rng.choice("yYnNcbrsLUuqQ1. :\x01~_") for _ in range(rng.randint(0, 12)))
+        typing = m.mode == sm.TYPING and sm.shows(m.view, width, height) is not None
+        state = (m.mode, m.question, m.asked, m.focus, m.active, m.view, m.typed, m.help_focus, m.mem_focus)
+        frame = m.frame(width, height)
+        self.assertEqual(m.paste(text, rng.random() < 0.3), [], "a paste returned a thing to do")
+        if typing:
+            self.assertEqual((m.mode, m.question), (sm.TYPING, 0))
+            self.assertTrue(m.typed.startswith(state[6]))
+        else:
+            after = (m.mode, m.question, m.asked, m.focus, m.active, m.view, m.typed, m.help_focus, m.mem_focus)
+            self.assertEqual(after, state, "a paste changed something outside typing mode")
+            self.assertEqual(m.message, sm.PASTE_DROPPED)
+            self.assertEqual(differs_only_in_message(frame, m.frame(width, height), height), True)
+        self.check_frame(m, width, height)
+
     def walk(self, view, keymap, seed):
         rng = random.Random(seed)
         pool = ["up", "down", "left", "right", "pgup", "pgdn", "home", "end", "enter", "esc", "space", "tab",
@@ -1019,6 +1046,9 @@ class Safety(Frames):
                 continue
             key = rng.choice(pool)
             if key == "ctrl-c":
+                continue
+            if rng.random() < 0.08:
+                self.walk_paste(r, rng, width, height)
                 continue
             before = (r.model.mode, r.model.asked)
             small = sm.shows(r.model.view, width, height) is None
@@ -1247,6 +1277,109 @@ class Review(Frames):
         r.model.focus = [row.name for row in sm.ROWS].index("Unkey now")
         self.assertEqual(r.model.key("enter"), [sm.Unkey()])
         self.assertEqual(r.model.mode, sm.MAIN)
+
+
+class Pastes(Frames):
+    """A paste, known by its marks: text in a typing line, dropped everywhere else."""
+
+    def test_a_paste_in_typing_mode_in_each_view(self):
+        for view in sm.VIEWS:
+            for width, height in ((80, 24), (60, 12), (40, 6)):
+                if sm.shows(view, width, height) is None:
+                    continue
+                r = sized(view, width, height)
+                r.press(":", "F")
+                self.assertEqual(r.press("paste:V 1.03, y"), [])
+                self.assertEqual((r.model.mode, r.model.typed, r.model.question), (sm.TYPING, "FV 1.03, y", 0))
+                self.assertEqual(r.model.message, "Pasted 9 characters. Enter applies.")
+                self.check_frame(r.model, width, height)
+                todos = r.press("enter")
+                self.assertEqual(sets(todos), ["FV 1.03, y"], "Enter still applies what was pasted")
+
+    def test_the_paste_words(self):
+        r = sized("face")
+        r.press(":")
+        r.model.paste("x")
+        self.assertEqual(r.model.message, "Pasted 1 character. Enter applies.")
+        r.model.paste("abc", left_out=True)
+        self.assertEqual(r.model.message, "Pasted 3 characters, some left out.")
+        r.model.paste("a\x01bé")
+        self.assertEqual(r.model.message, "Pasted 2 characters, some left out.")
+        r.model.paste("")
+        self.assertEqual(r.model.message, "Nothing in the paste.")
+        r.model.paste("\x02", left_out=True)
+        self.assertEqual(r.model.message, "Nothing in the paste.")
+        self.assertEqual(r.model.typed, "xabcab")
+
+    def test_a_paste_at_a_typing_lines_limit(self):
+        r = sized("face")
+        r.press("R", "s")
+        r.model.typed = "x" * (sm.TYPED_MOST - 2)
+        r.model.paste("abcd")
+        self.assertEqual(len(r.model.typed), sm.TYPED_MOST)
+        self.assertEqual(r.model.message, "Pasted 2 characters, some left out.")
+        r.model.paste("e")
+        self.assertEqual(r.model.message, "Nothing in the paste.")
+        self.assertEqual(r.model.mode, sm.TYPING, "nothing applied, no question asked")
+        self.assertEqual(r.carrier.tools, [])
+
+    def dropped(self, r, width=80, height=24):
+        m = r.model
+        m.size(width, height)
+        state = (m.mode, m.question, m.asked, m.focus, m.active, m.view, m.typed, m.help_focus, m.mem_focus)
+        frame = m.frame(width, height)
+        start = len(r.done)
+        self.assertEqual(m.paste("y\n y c b r s U L q Q 1 enter"), [])
+        self.assertEqual(r.done[start:], [])
+        after = (m.mode, m.question, m.asked, m.focus, m.active, m.view, m.typed, m.help_focus, m.mem_focus)
+        self.assertEqual(after, state)
+        self.assertEqual(m.message, sm.PASTE_DROPPED)
+        self.assertTrue(differs_only_in_message(frame, m.frame(width, height), height))
+
+    def test_a_paste_is_dropped_in_main_help_memory_and_too_small(self):
+        for view in sm.VIEWS:
+            for keys in ((), ("?",), ("C",), ("down",)):
+                r = sized(view)
+                r.press(*keys)
+                self.dropped(r)
+            r = sized(view)
+            r.press(":", "F")
+            self.dropped(r, 30, 5)
+            self.assertEqual(r.model.typed, "F", "too small: not even a typing line takes it")
+
+    def test_a_paste_never_answers_a_question(self):
+        asks_of = [keys for keys, *_ in Questions.cases(Questions())]
+        asks_of += [("S",), ("R",), ("c",)]
+        for keys in asks_of:
+            r = sized("face")
+            r.press(*keys)
+            self.assertEqual(r.model.mode, sm.ASKING, keys)
+            self.dropped(r)
+            self.assertEqual(r.carrier.frames, [])
+        r = sized("list")
+        r.press("V")
+        self.dropped(r)
+        r = sized("face", workspace=True, windows=("chat",))
+        r.tick(2.5)
+        r.press("q")
+        self.dropped(r)
+
+    def test_unkeys_and_unkey_now(self):
+        face, listed = sized("face").model, sized("list").model
+        self.assertTrue(face.unkeys("U") and face.unkeys("u") and listed.unkeys("U"))
+        for key in ("L", "q", "y", "enter"):
+            self.assertFalse(face.unkeys(key) or listed.unkeys(key), key)
+        self.assertFalse(listed.unkeys("u"))
+        remapped = sized("face", keymap=km.Keymap([(1, "unkey", "F5")])).model
+        self.assertTrue(remapped.unkeys("f5"))
+        self.assertFalse(remapped.unkeys("U"))
+        for keys in ((":", "A", "B"), ("c", "c"), ("?",), ("C",), ()):
+            r = sized("face")
+            r.press(*keys)
+            m = r.model
+            state = (m.mode, m.question, m.asked, m.typed)
+            self.assertEqual(m.unkey_now(), [sm.Unkey()], keys)
+            self.assertEqual((m.mode, m.question, m.asked, m.typed), state, keys)
 
 
 def why(trace):

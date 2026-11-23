@@ -8,7 +8,8 @@ Carrier carries out each thing to do the model gives, against a FakeDaemon, and 
 every one. Nothing here opens a socket, a port or a terminal, and nothing transmits:
 SendFrame and Tool are only recorded and answered.
 
-Runner is a model, a FakeDaemon and a Carrier together, with a pretend clock.
+Runner is a model, a FakeDaemon and a Carrier together, with a pretend clock. A key named
+paste:TEXT is a paste of TEXT, as the paste guard gives one.
 
 GPL-2.0-or-later.
 """
@@ -181,7 +182,10 @@ class Runner:
         """Press keys; returns every thing to do they led to, in order."""
         start = len(self.done)
         for name in names:
-            self.run(self.model.key(name))
+            if name.startswith("paste:"):  # a paste with its marks, as the paste guard gives it
+                self.run(self.model.paste(name[len("paste:") :]))
+            else:
+                self.run(self.model.key(name))
         return self.done[start:]
 
     def type(self, text):

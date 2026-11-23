@@ -403,6 +403,77 @@ def the_tools_and_the_keys(env, xara):
         tmux("kill-server")
 
 
+def pastes_through_tmux(env):
+    """tmux's own paste command with marks (paste-buffer -p), into the rig screen's main mode and
+    into a typing line."""
+    client = Client([], env)
+    try:
+        if not check("the face shows for the paste checks", rig_ready() and wait_until(lambda: shows("Unlocked.")),
+                     dump()):
+            return
+        time.sleep(0.5)
+        radio = [ask(line) for line in ("FQ 0", "MD 0", "PC 0", "BC")]
+        tmux("set-buffer", "-b", "t750", "mpb146.52")
+        tmux("paste-buffer", "-p", "-b", "t750", "-t", "d750:rig")
+        check("tmux's paste into main mode is dropped", wait_until(lambda: message_row() == "A paste was dropped."),
+              dump())
+        time.sleep(1.5)
+        check("tmux's paste into main mode sets nothing",
+              [ask(line) for line in ("FQ 0", "MD 0", "PC 0", "BC")] == radio)
+        client.press("1")
+        typing = wait_until(lambda: bottom_row().endswith("1"))
+        tmux("set-buffer", "-b", "t750", "46.52")
+        tmux("paste-buffer", "-p", "-b", "t750", "-t", "d750:rig")
+        check("tmux's paste into a typing line is text in the line",
+              typing and wait_until(lambda: bottom_row().endswith("146.52"))
+              and wait_until(lambda: message_row() == "Pasted 5 characters. Enter applies."), dump())
+        time.sleep(0.7)
+        client.press("\x1b")
+        wait_until(lambda: not bottom_row().endswith("146.52"))
+        time.sleep(1.0)
+        check("the pasted frequency was never applied", ask("FQ 0") == radio[0], ask("FQ 0"))
+        client.press("Q")
+        check("the screen quits after the pastes", wait_until(lambda: not server_up()))
+    finally:
+        client.end()
+        tmux("kill-server")
+
+
+def what_tmux_marks():
+    """Does tmux mark a paste only for a program that asked for it? Said as a note, and the case
+    the screen relies on, a program that asked, is a check."""
+    made = tmux("new-session", "-d", "-s", "d750", "-n", "rig", "-x", "80", "-y", "24", "sleep 600")
+    if not check("a server for the marks probe starts", made.returncode == 0, made.stderr):
+        return
+    try:
+        seen = {}
+        for name, asks in (("unasked", False), ("asked", True)):
+            out = os.path.join(WORK, f"marks-{name}.txt")
+            ask_bytes = "printf '\\033[?2004h'; " if asks else ""
+            tmux("new-window", "-d", "-t", "d750", "-n", name, f"{ask_bytes}stty -echo; cat -v > {out}")
+            time.sleep(0.5)
+            tmux("set-buffer", "-b", "probe", "abc")
+            tmux("paste-buffer", "-p", "-b", "probe", "-t", f"d750:{name}")
+            time.sleep(0.3)
+            tmux("send-keys", "-t", f"d750:{name}", "Enter")
+            time.sleep(0.2)
+            tmux("send-keys", "-t", f"d750:{name}", "C-d")
+            wait_until(lambda: name not in windows(), 5)
+            try:
+                with open(out, encoding="latin-1") as f:
+                    seen[name] = f.read()
+            except OSError:
+                seen[name] = ""
+        unasked, asked = "^[[200~" in seen["unasked"], "^[[200~" in seen["asked"]
+        print(f"Note: tmux marked a paste for a program that did not ask: {'yes' if unasked else 'no'}. "
+              f"Saw {seen['unasked'].strip()!r}.")
+        print(f"Note: tmux marked a paste for a program that asked: {'yes' if asked else 'no'}. "
+              f"Saw {seen['asked'].strip()!r}.")
+        check("tmux marks a paste for a program that asked for bracketed paste", asked, repr(seen))
+    finally:
+        tmux("kill-server")
+
+
 ARGS = (
     "$(touch {work}/pwned1)",
     "'; touch {work}/pwned2; '",
@@ -486,6 +557,8 @@ def main():
     try:
         for part in (lambda: the_workspace_starts_and_options_reach_the_inner_program(env),
                      lambda: the_tools_and_the_keys(env, xara),
+                     lambda: pastes_through_tmux(env),
+                     what_tmux_marks,
                      typed_text_never_reaches_a_shell):
             try:
                 part()

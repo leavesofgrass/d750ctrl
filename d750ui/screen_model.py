@@ -54,6 +54,8 @@ LOCKED_NOTHING_SENT = "PTT is locked. Nothing sent."
 UNKNOWN_NOTHING_SENT = "PTT state not read. Nothing sent."
 NO_XARA_PORT = "The frame's port is not a number."
 TOO_FAST = "Too fast. Answer again."
+PASTE_DROPPED = "A paste was dropped."
+NOTHING_PASTED = "Nothing in the paste."
 VOX_REFUSED = "Refused: VOX lets the radio key itself."
 NO_MYCALL = "Set mycall in the settings first."
 HELP_HINT = "Help. Escape or ? goes back."
@@ -1613,13 +1615,54 @@ class ScreenModel:
             self.typed = self.typed[:-1]
             return []
         ch = " " if name == "space" else name
-        if len(ch) != 1 or not " " <= ch <= "~":
-            return []
-        if len(self.typed) >= TYPED_MOST:
-            self._tell("That is as long as it can be.")
+        refusal = self._typing_refusal(ch)
+        if refusal is not None:
+            if refusal:
+                self._tell(refusal)
             return []
         self.typed += ch
         return []
+
+    def _typing_refusal(self, ch):
+        """None when a typed character may be added; else its words, empty when it says nothing."""
+        if len(ch) != 1 or not " " <= ch <= "~":
+            return ""
+        if len(self.typed) >= TYPED_MOST:
+            return "That is as long as it can be."
+        return None
+
+    # ----------------------------------------------------------------- pastes
+
+    def paste(self, text, left_out=False):
+        """A paste, known by its marks. In typing mode its text is added, each character by the
+        test a typed character passes, and nothing is applied. Anywhere else, and when the window
+        is too small, nothing changes but the message row. Always returns an empty list."""
+        text = str(text)
+        if self.mode != TYPING or shows(self.view, self.width, self.height) is None:
+            self._tell(PASTE_DROPPED)
+            return []
+        kept = 0
+        turned_away = bool(left_out)
+        for ch in text:
+            if self._typing_refusal(ch) is None:
+                self.typed += ch
+                kept += 1
+            else:
+                turned_away = True
+        if kept == 0:
+            self._tell(NOTHING_PASTED)
+        else:
+            count = f"{kept} character" + ("" if kept == 1 else "s")
+            self._tell(f"Pasted {count}, some left out." if turned_away else f"Pasted {count}. Enter applies.")
+        return []
+
+    def unkeys(self, name):
+        """True when the key is a key of unkey in the wanted view's family, in any mode."""
+        return self.keymap.action(self.family, str(name)) == "unkey"
+
+    def unkey_now(self):
+        """What unkey does in main mode, in any mode: what was typed, a question or a mode stay."""
+        return [Unkey()]
 
     def _finish_typing(self):
         self.mode = MAIN
