@@ -342,6 +342,8 @@ class Relay:
         self.lock = threading.Lock()
         self.open = []  # the sockets of the connections open now, both sides
         self.answered = []  # (time, line) for each answer handed back
+        self.holds = {}  # line: seconds that line is held, daemon words too
+        self.never = set()  # lines held for good: never forwarded, never answered
         self.connections = 0
         self.srv = socket.socket()
         self.srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -379,8 +381,10 @@ class Relay:
                 if not line:
                     continue
                 self.sent.append((time.monotonic(), line))
-                pause = self.slow
-                if pause > 0 and line.split()[0].lower() not in DAEMON_WORDS:
+                if line in self.never:
+                    threading.Event().wait()  # never forwarded, never answered
+                pause = self.holds.get(line, self.slow)
+                if pause > 0 and (line in self.holds or line.split()[0].lower() not in DAEMON_WORDS):
                     with self.lock:
                         self.holding += 1
                     time.sleep(pause)
@@ -1630,6 +1634,80 @@ def test_an_unkey_then_ctrl_c_is_not_lost():
     _unkey_then_end("ctrl-c")
 
 
+def test_an_unkey_and_a_lock_both_out_at_quit_both_arrive():
+    run = _unlocked_face()
+    try:
+        run.ptt.holds["T 0"] = 0.6
+        run.cmd.holds["lock"] = 1.2  # answered last, so a wait on the first thread only ends too soon
+        t0 = time.monotonic()
+        run.press("ULQ")  # one write: unkey, lock, quit
+        code = run.exited()
+        assert code == 0, f"exit code {code}"
+        unkey = [t for t, line in run.ptt.answered if line == "T 0" and t >= t0]
+        lock = [t for t, line in run.cmd.answered if line == "lock" and t >= t0]
+        assert unkey and lock, f"unkey answered {unkey}, lock answered {lock}"
+        last = max(unkey[0], lock[0])
+        assert run.ended_at >= last - 0.05, f"the program ended {last - run.ended_at:.2f} s before both were answered"
+        assert "; locked" in ask("state"), "the lock never reached the daemon"
+        assert b"Warn:" not in bytes(run.term.raw), "a warning with both answered"
+        run.settings_back()
+        run.left_the_screen()
+    finally:
+        run.ptt.holds.clear()
+        run.cmd.holds.clear()
+        run.end()
+        if "; locked" in ask("state"):
+            ask("unlock")
+
+
+class Silent:
+    """Takes connections and never answers."""
+
+    def __init__(self):
+        self.held = []
+        self.srv = socket.socket()
+        self.srv.bind(("127.0.0.1", 0))
+        self.srv.listen(8)
+        self.port = self.srv.getsockname()[1]
+        threading.Thread(target=self._accept, daemon=True).start()
+
+    def _accept(self):
+        while True:
+            try:
+                c, _ = self.srv.accept()
+            except OSError:
+                return
+            self.held.append(c)
+
+
+def test_a_lock_and_an_unkey_never_answered_are_said():
+    silent = Silent()
+    run = Running(80, 24, ["--no-tmux"], D750_PTT_PORT=str(silent.port))
+    try:
+        run.ready()
+        run.wait_for(lambda: run.term.text(0).startswith("d750ctrl. Receiving. Unlocked."), "Unlocked", 5)
+        run.soak(0.5)
+        run.cmd.never.add("lock")
+        t0 = time.monotonic()
+        run.press("ULQ")
+        code = run.exited()
+        assert code == 0, f"exit code {code}"
+        assert run.ended_at - t0 < 4.0, f"the wait took {run.ended_at - t0:.1f} s"
+        said = re.findall(r"Warn:[^\r\n\x1b]*", run.term.raw.decode("latin-1"))
+        assert said == ["Warn: lock not confirmed.", "Warn: unkey not confirmed."], said
+        for line in said:
+            assert not lines.problems(line, 40), line
+        raw = bytes(run.term.raw)
+        assert raw.rfind(LEAVE_ALTERNATE) < raw.find(b"Warn:"), "a warning before the terminal was back"
+        run.settings_back()
+    finally:
+        run.cmd.never.clear()
+        run.end()
+        silent.srv.close()
+        if "; locked" in ask("state"):
+            ask("unlock")
+
+
 def test_many_unkeys_start_one_connection():
     run = _unlocked_face()
     try:
@@ -1798,7 +1876,8 @@ def main():
                    test_a_paste_at_the_frame_sends_nothing, test_the_first_lock_after_a_restart_is_kept,
                    test_an_unkey_typed_ahead_of_a_question_is_kept, test_a_stream_of_keys_never_answers_a_question,
                    test_a_paste_after_typing_changes_nothing_more, test_an_unkey_then_quit_is_not_lost,
-                   test_an_unkey_then_ctrl_c_is_not_lost, test_many_unkeys_start_one_connection,
+                   test_an_unkey_then_ctrl_c_is_not_lost, test_an_unkey_and_a_lock_both_out_at_quit_both_arrive,
+                   test_a_lock_and_an_unkey_never_answered_are_said, test_many_unkeys_start_one_connection,
                    test_an_unkey_in_a_paste_ends_the_question_and_the_rest_is_dropped):
             test(fn)
     finally:

@@ -800,13 +800,16 @@ class Urgent:
             return [thread for thread, _ in self.out.values()]
 
     def wait(self, seconds=URGENT_WAIT_SECONDS):
-        """Wait for every unkey or lock still out, at most seconds in all."""
+        """Wait for every unkey or lock still out, at most seconds in all.
+        Returns the kinds still not answered, lock first."""
         end = time.monotonic() + seconds
         for thread in self.threads():
             left = end - time.monotonic()
             if left <= 0:
-                return
+                break
             thread.join(left)
+        with self.lock:
+            return [kind for kind in ("lock", "unkey") if kind in self.out]
 
 
 class Keys:
@@ -966,7 +969,8 @@ def _session(model, ports, theme, ending):
             termios.tcsetattr(fd, termios.TCSADRAIN, saved)
         except termios.error:
             pass
-        urgent.wait()  # no way out loses an unkey or a lock still out: 2 seconds at most
+        for kind in urgent.wait():  # no way out loses an unkey or a lock still out: 2 seconds at most
+            print(f"Warn: {kind} not confirmed.", file=sys.stderr, flush=True)
         common.stop()
         signal.signal(signal.SIGINT, signal.default_int_handler)
         for signum, handler in handlers.items():
