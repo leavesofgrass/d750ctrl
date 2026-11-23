@@ -15,6 +15,7 @@ GPL-2.0-or-later.
 import curses
 import fcntl
 import os
+import queue
 import re
 import select
 import signal
@@ -340,6 +341,8 @@ class Relay:
         self.holding = 0
         self.lock = threading.Lock()
         self.open = []  # the sockets of the connections open now, both sides
+        self.answered = []  # (time, line) for each answer handed back
+        self.connections = 0
         self.srv = socket.socket()
         self.srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.srv.bind(("127.0.0.1", 0))
@@ -365,6 +368,8 @@ class Relay:
 
     def _serve(self, c):
         try:
+            with self.lock:
+                self.connections += 1
             up = socket.create_connection(("127.0.0.1", self.upstream), timeout=10)
             with self.lock:
                 self.open += [c, up]
@@ -383,6 +388,7 @@ class Relay:
                         self.holding -= 1
                 uf.write(raw)
                 cf.write(uf.readline())
+                self.answered.append((time.monotonic(), line))
         except OSError:
             pass
 
@@ -593,7 +599,8 @@ class Running:
         while self.proc.poll() is None:
             if time.monotonic() > end:
                 raise Timeout("d750ctrl did not end in time")
-            self.pump(0.1)
+            self.pump(0.02)
+        self.ended_at = time.monotonic()
         while self.pump(0):
             pass
         return self.proc.returncode
@@ -1498,6 +1505,175 @@ def test_a_paste_at_the_frame_sends_nothing():
         run.end()
 
 
+class QuestionModel(PretendModel):
+    """A pretend model with a question and a mode: t opens a question, n closes it, 1 starts
+    typing and Enter ends it, U is urgent."""
+
+    def __init__(self, question=0, mode="main"):
+        super().__init__(urgent=("U",))
+        self.question = question
+        self.mode = mode
+
+    def key(self, name, early=False):
+        self.given.append((name, early))
+        if name == "t":
+            self.question, self.mode = self.question + 1, "asking"
+        elif name == "n" and self.question:
+            self.question, self.mode = 0, "main"
+        elif name == "1":
+            self.mode = "typing"
+        elif name == "enter" and self.mode == "typing":
+            self.mode = "main"
+        return []
+
+    def note(self, text):
+        self.given.append(("note", text))
+
+
+def _keys(model, pending, question=0):
+    win = PretendWindow([ord(c) if isinstance(c, str) else c for c in pending])
+    keys = scr.Keys(win, model, lambda todos: False, quiet=scr.QuietTime(seconds=0), clock=lambda: 5.0)
+    keys.question = question
+    return keys, win
+
+
+def test_the_loops_work_for_one_key_drains_when_the_question_changes():
+    # The quiet time is off here (0 seconds), so that only the draining is tested.
+    model = QuestionModel()
+    keys, win = _keys(model, "yp")
+    assert keys.key(ord("t"), 5.0) is False
+    assert model.given == [("t", False)] and win.codes == [], (model.given, win.codes)
+    model = QuestionModel()
+    keys, win = _keys(model, "Uy")
+    keys.key(ord("t"), 5.0)
+    assert model.given == [("t", False), ("U", True)] and win.codes == [], model.given
+    model = QuestionModel(question=3, mode="asking")
+    keys, win = _keys(model, "mp", question=3)
+    keys.key(ord("n"), 5.0)
+    assert model.given == [("n", False)] and win.codes == [], "a question that closes drains too"
+    model = QuestionModel(mode="typing")
+    keys, win = _keys(model, "mp")
+    keys.key(10, 5.0)
+    assert model.given == [("enter", False)] and win.codes == [], "a key that ends typing drains"
+    model = QuestionModel()
+    keys, win = _keys(model, "m")
+    keys.key(ord("x"), 5.0)
+    assert model.given == [("x", False)] and win.codes == [ord("m")], "nothing changed, nothing drained"
+    model = QuestionModel(mode="typing")
+    keys, win = _keys(model, "4")
+    keys.key(ord("1"), 5.0)
+    assert win.codes == [ord("4")], "typing goes on: the next digit is not drained"
+
+
+def test_urgent_threads_one_of_each_kind():
+    gate = threading.Event()
+    calls = []
+
+    def carrier(todo):
+        calls.append(todo)
+        gate.wait(5)
+        return "RPRT 0"
+
+    results = queue.Queue()
+    urgent = scr.Urgent(scr.Ports(), results, carrier)
+    first, second, third, lock = sm.Unkey(), sm.Unkey(), sm.Unkey(), sm.Set("lock")
+    assert urgent.put(first) is True
+    assert urgent.put(second) is False and urgent.put(third) is False, "a second unkey thread started"
+    assert urgent.put(lock) is True, "a lock has a thread of its own"
+    assert wait_until(lambda: len(calls) == 2, 2, 0.01) and len(urgent.threads()) == 2, calls
+    gate.set()
+    urgent.wait()
+    got = []
+    while not results.empty():
+        got.append(results.get_nowait())
+    assert sorted(id(item[1]) for item in got) == sorted(id(t) for t in (first, second, third, lock)), got
+    assert all(item[0] == "done" and item[2] == "RPRT 0" for item in got), got
+    assert urgent.threads() == []
+    hang = scr.Urgent(scr.Ports(), queue.Queue(), lambda todo: threading.Event().wait(10))
+    hang.put(sm.Unkey())
+    hang.put(sm.Set("lock"))
+    t0 = time.monotonic()
+    hang.wait(0.3)
+    assert time.monotonic() - t0 < 0.6, "the wait is bounded in all, not for each thread"
+
+
+def _unkey_then_end(how):
+    run = _unlocked_face()
+    try:
+        run.ptt.slow = 0.6  # the PTT port answers after a pause
+        t0 = time.monotonic()
+        if how == "quit":
+            run.press("UQ")  # one write
+        else:
+            run.press("U")
+            assert wait_until(lambda: run.ptt.first("T 0", t0) is not None, 3, 0.01), "no unkey went out"
+            run.press("\x03")
+        code = run.exited()
+        assert code == 0, f"exit code {code}"
+        assert wait_until(lambda: run.ptt.first("T 0", t0) is not None, 2, 0.02), "the unkey never arrived"
+        answered = [t for t, line in run.ptt.answered if line == "T 0" and t >= t0]
+        assert answered, "the unkey was not answered"
+        assert run.ended_at >= answered[0] - 0.05, \
+            f"the program ended {answered[0] - run.ended_at:.2f} s before its unkey was answered"
+        run.settings_back()
+        run.left_the_screen()
+    finally:
+        run.ptt.slow = 0.0
+        run.end()
+
+
+def test_an_unkey_then_quit_is_not_lost():
+    _unkey_then_end("quit")
+
+
+def test_an_unkey_then_ctrl_c_is_not_lost():
+    _unkey_then_end("ctrl-c")
+
+
+def test_many_unkeys_start_one_connection():
+    run = _unlocked_face()
+    try:
+        run.ptt.slow = 1.5
+        before = run.ptt.connections
+        for _ in range(6):
+            run.press("U")
+            run.soak(0.05)
+        run.soak(0.3)
+        held = run.ptt.connections - before
+        run.ptt.slow = 0.0
+        run.shows("Unkey sent.", 22, 5)
+        assert held == 1, f"{held} connections while the PTT port held its answer"
+        run.quit_cleanly("Q")
+    finally:
+        run.ptt.slow = 0.0
+        run.end()
+
+
+def test_an_unkey_in_a_paste_ends_the_question_and_the_rest_is_dropped():
+    run = _unlocked_face()
+    try:
+        before = len(stub_log())
+        run.press("R")
+        run.shows("RTTY: r receive, s send", 23, 5)
+        run.soak(0.7)
+        run.press("s")
+        run.shows("Text to send:", 23, 5)
+        run.soak(0.3)
+        radio = (ask("MD 0"), ask("PC 0"), ask("BC"))
+        t0 = time.monotonic()
+        run.press("CQ de W9XYZ\ryou mp b")  # the reviewer's probe, in one write
+        assert wait_until(lambda: run.ptt.first("T 0", t0) is not None, 3, 0.02), "the u did not unkey"
+        run.soak(1.5)
+        assert (ask("MD 0"), ask("PC 0"), ask("BC")) == radio, "the rest of the paste changed the radio"
+        sets = [l for l in run.cmd.lines_since(t0) if l.startswith(("MD ", "PC ", "BC")) and "," in l]
+        assert sets == [], sets
+        assert stub_log()[before:] == [], stub_log()[before:]
+        assert not run.term.text(23).startswith("Send this text"), f"the question stayed:\n{run.dump()}"
+        run.quit_cleanly("Q")
+    finally:
+        run.end()
+
+
 def test_an_unkey_typed_ahead_of_a_question_is_kept():
     run = _unlocked_face()
     try:
@@ -1603,7 +1779,9 @@ def main():
     for fn in (test_sequence_guard, test_key_names, test_settings_are_chosen, test_the_looks_keep_red_and_green_out,
                test_carriers_never_raise_for_a_socket_fault, test_the_frame_is_sent_to_the_port_given,
                test_the_frames_port_comes_from_the_environment, test_a_lock_is_tried_once_more_on_a_new_connection,
-               test_the_quiet_time, test_draining_gives_only_unkey_and_lock, test_escdelay_default, test_tool_arguments,
+               test_the_quiet_time, test_draining_gives_only_unkey_and_lock,
+               test_the_loops_work_for_one_key_drains_when_the_question_changes, test_urgent_threads_one_of_each_kind,
+               test_escdelay_default, test_tool_arguments,
                test_check_with_no_terminal_and_no_daemon, test_help_and_bad_options,
                test_no_daemon_is_said_before_curses_starts):
         test(fn)
@@ -1619,7 +1797,9 @@ def main():
                    test_escdelay_is_set_before_curses_starts, test_a_paste_at_a_send_sends_nothing,
                    test_a_paste_at_the_frame_sends_nothing, test_the_first_lock_after_a_restart_is_kept,
                    test_an_unkey_typed_ahead_of_a_question_is_kept, test_a_stream_of_keys_never_answers_a_question,
-                   test_a_paste_after_typing_changes_nothing_more):
+                   test_a_paste_after_typing_changes_nothing_more, test_an_unkey_then_quit_is_not_lost,
+                   test_an_unkey_then_ctrl_c_is_not_lost, test_many_unkeys_start_one_connection,
+                   test_an_unkey_in_a_paste_ends_the_question_and_the_rest_is_dropped):
             test(fn)
     finally:
         stop_test_bed(bed)

@@ -754,20 +754,106 @@ def drain(win, guard, model, hand, now):
         win.timeout(POLL)
 
 
-def run_urgent(todo, ports, results):
-    """Unkey or Set("lock") in a short thread of its own, so that an unkey never waits behind
-    a lock that hangs. The result comes back to the main thread through results."""
+URGENT_WAIT_SECONDS = 2.0  # how long a way out waits, in all, for an unkey or lock still out
 
-    def go():
+
+class Urgent:
+    """Unkey and Set("lock"), each in a short thread of its own, so that an unkey never waits
+    behind a read or behind a lock that hangs. At most one unkey thread and one lock thread at
+    a time: one that comes while its kind is out starts no thread, and is given that one's
+    answer when it comes back. Results come back to the main thread through results.
+
+    wait() is called on every way out, so that no unkey or lock dies with the program.
+    """
+
+    def __init__(self, ports, results, carrier=None):
+        self.ports = ports
+        self.results = results
+        self.carrier = carrier or (lambda todo: carry(todo, None, ports))
+        self.lock = threading.Lock()
+        self.out = {}  # kind: (thread, the todos waiting for its answer)
+
+    def put(self, todo):
+        kind = "unkey" if isinstance(todo, sm.Unkey) else "lock"
+        with self.lock:
+            if kind in self.out:
+                self.out[kind][1].append(todo)
+                return False
+            thread = threading.Thread(target=self._run, args=(kind, todo), name=f"d750ctrl-{kind}", daemon=True)
+            self.out[kind] = (thread, [todo])
+            thread.start()
+            return True
+
+    def _run(self, kind, todo):
         try:
-            result, error = carry(todo, None, ports), None
+            result, error = self.carrier(todo), None
         except Exception as e:  # handed to the model, which says it
             result, error = None, e
-        results.put(("done", todo, result, error, time.strftime("%H:%M:%S")))
+        at = time.strftime("%H:%M:%S")
+        with self.lock:
+            _thread, waiting = self.out.pop(kind)
+        for each in waiting:
+            self.results.put(("done", each, result, error, at))
 
-    thread = threading.Thread(target=go, name="d750ctrl-urgent", daemon=True)
-    thread.start()
-    return thread
+    def threads(self):
+        with self.lock:
+            return [thread for thread, _ in self.out.values()]
+
+    def wait(self, seconds=URGENT_WAIT_SECONDS):
+        """Wait for every unkey or lock still out, at most seconds in all."""
+        end = time.monotonic() + seconds
+        for thread in self.threads():
+            left = end - time.monotonic()
+            if left <= 0:
+                return
+            thread.join(left)
+
+
+class Keys:
+    """The loop's work for one key that curses read, so that a test can call it with a
+    pretend window and a pretend model.
+
+    Typed-ahead keys are drained whenever model.question changes its value, to a new number
+    or to 0, and whenever a key ends typing: only unkey and lock act on them.
+    """
+
+    def __init__(self, win, model, hand, quiet=None, guard=None, clock=time.monotonic):
+        self.win = win
+        self.model = model
+        self.hand = hand
+        self.quiet = quiet or QuietTime()
+        self.guard = guard or SequenceGuard()
+        self.clock = clock
+        self.question = 0
+
+    def drain(self):
+        return drain(self.win, self.guard, self.model, self.hand, self.clock)
+
+    def watch(self):
+        """Drain when the question changed since last seen. True when a thing to do was Quit."""
+        while True:
+            question = self.model.question or 0
+            self.quiet.seen(question, self.clock())
+            if question == self.question:
+                return False
+            self.question = question
+            if self.drain():
+                return True
+
+    def key(self, code, now):
+        """One key curses read, at now. True when a thing to do was Quit."""
+        code, broken = self.guard.take(code, now)
+        if broken:
+            self.model.note(BROKEN)
+        name = None if code is None else key_name(code)
+        if name is None:
+            return False
+        was_typing = self.model.mode == "typing"
+        if self.hand(self.model.key(name, early=self.quiet.key(now))):
+            return True
+        if was_typing and self.model.mode != "typing" and self.drain():
+            return True
+        return self.watch()
 
 
 class _Ending:
@@ -777,7 +863,7 @@ class _Ending:
         self.close_workspace = False
 
 
-def _loop(win, model, common, results, look, ports, ending):
+def _loop(win, model, common, urgent, results, look, ports, ending):
     """Keys, results and the clock, until Quit. Returns the exit code."""
     redraw = True
     last = None
@@ -802,20 +888,13 @@ def _loop(win, model, common, results, look, ports, ending):
                 if hand(model.finished(todo, result, None, time.strftime("%H:%M:%S"))):
                     return True
             elif is_urgent(todo):
-                run_urgent(todo, ports, results)
+                urgent.put(todo)
             else:
                 common.put(todo)
         return False
 
-    quiet = QuietTime()
-    guard = SequenceGuard()
-
-    def watch():
-        """Drain typed-ahead keys when a new question opened. True when one of them quit."""
-        while quiet.seen(model.question, time.monotonic()):
-            if drain(win, guard, model, hand, time.monotonic):
-                return True
-        return False
+    keys = Keys(win, model, hand)
+    watch = keys.watch
 
     height, width = win.getmaxyx()
     model.size(width, height)
@@ -827,22 +906,8 @@ def _loop(win, model, common, results, look, ports, ending):
         code = win.getch()
         if code == curses.KEY_RESIZE:
             redraw = True
-        elif code != -1:
-            now = time.monotonic()
-            code, broken = guard.take(code, now)
-            if broken:
-                model.note(BROKEN)
-            name = None if code is None else key_name(code)
-            if name is not None:
-                was_typing = model.mode == "typing"
-                if hand(model.key(name, early=quiet.key(now))):
-                    return 0
-                if was_typing and model.mode != "typing":
-                    # a key took the model out of typing: what was typed ahead is drained
-                    if drain(win, guard, model, hand, time.monotonic):
-                        return 0
-                if watch():
-                    return 0
+        elif code != -1 and keys.key(code, time.monotonic()):
+            return 0
         while True:
             try:
                 item = results.get_nowait()
@@ -868,6 +933,7 @@ def _session(model, ports, theme, ending):
     set_escdelay(os.environ)
     results = queue.Queue()
     common = Worker(Link(ports.cmd_port), ports, results, "d750ctrl-link")
+    urgent = Urgent(ports, results)
     win = None
     try:
         win = curses.initscr()
@@ -881,7 +947,7 @@ def _session(model, ports, theme, ending):
         win.timeout(POLL)
         look = Look(theme, True, colors_for(theme))
         common.start()
-        return _loop(win, model, common, results, look, ports, ending)
+        return _loop(win, model, common, urgent, results, look, ports, ending)
     finally:
         for signum in (*EXIT_SIGNALS, signal.SIGINT):
             signal.signal(signum, signal.SIG_IGN)  # nothing may cut the putting back short
@@ -900,6 +966,7 @@ def _session(model, ports, theme, ending):
             termios.tcsetattr(fd, termios.TCSADRAIN, saved)
         except termios.error:
             pass
+        urgent.wait()  # no way out loses an unkey or a lock still out: 2 seconds at most
         common.stop()
         signal.signal(signal.SIGINT, signal.default_int_handler)
         for signum, handler in handlers.items():
