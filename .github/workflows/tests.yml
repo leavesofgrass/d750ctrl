@@ -73,6 +73,12 @@ jobs:
           sleep 2
           exit $rc
 
+      - name: The rig screen's keys, with no terminal (keymap-test.py)
+        run: python3 -I tests/keymap-test.py
+
+      - name: The rig screen's three views, with no terminal (screen-model-test.py)
+        run: python3 -I tests/screen-model-test.py
+
       - name: The rig screen, in a pseudo terminal (d750ctrl-test.py)
         run: python3 tests/d750ctrl-test.py
 
