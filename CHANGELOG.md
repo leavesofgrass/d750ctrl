@@ -30,10 +30,13 @@
   while a tool has the terminal. A marked paste is never keys. In a typing line it is text (line ends become
   spaces, Enter still applies, and the message row says "Pasted 14 characters. Enter applies."); anywhere
   else it is dropped ("A paste was dropped."). It never answers a question, presses Enter or changes the
-  radio. An unkey key still unkeys while a paste is open, and Escape ends a paste that hangs. A terminal
-  that sends no marks pastes as keys, as before, and then the half second and the dropping of keys typed
-  ahead still stand. Still possible there: a paste that pauses for half a second or more and then has a
-  small y could answer a send question.
+  radio. A key that comes inside or right after a paste can only unkey, or lock when PTT is not locked;
+  Escape ends a paste that hangs, and while one is open the message row says "A paste is open. Escape
+  ends it." After a paste no key acts for half a second (two seconds after an Escape, never more than
+  five): a key in that time is dropped and the message row says "A key after a paste was dropped." What
+  is left: a marked paste can only add text to a typing line, unkey, or lock; beyond that it takes a
+  link that stalls inside a paste for more than a second or two. A terminal that sends no marks pastes
+  as keys, and then the half second and the dropping of keys typed ahead still stand.
 - Changed: the keys of unkey and lock act in help, in the memory list and at every question. Each goes on a
   connection of its own and never waits behind a read, and a lock that fails is tried once more. A frame or
   a send is refused while the lock state is not known ("PTT state not read. Nothing sent."). Every way out

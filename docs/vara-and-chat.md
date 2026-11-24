@@ -131,9 +131,12 @@ refused while PTT is locked ("PTT is locked. Nothing sent.") or while the lock s
 ("Set mycall in the settings first."). A question takes no answer in its first half second: a key
 that comes too soon is dropped and the message row says "Too fast. Answer again." A stream of keys,
 such as a paste, never answers a question. The screen also asks the terminal to mark pastes, and a
-marked paste is never keys, so it cannot answer a question. The caveat is left only for a terminal
-that sends no marks, or a mark the link cuts from its text by more than a second: there a paste that
-pauses for half a second or more and then has a small `y` could still answer the question.
+marked paste is never keys, so it cannot answer a question. A key that comes inside or right after a
+paste can only unkey, or lock when PTT is not locked; every other key is dropped for half a second.
+What is left: a marked paste can only add text to a typing line, unkey, or lock. Beyond that it takes
+a link that stalls inside a paste for more than a second or two, which makes the rest of the paste
+keys. A terminal that sends no marks pastes as keys, and there a paste that pauses for half a second
+or more and then has a small `y` could still answer the question.
 If `D750_XARA_PORT` is set and is not a number, the frame is refused ("The frame's port is not a
 number.") and 8300 is not used instead.
 

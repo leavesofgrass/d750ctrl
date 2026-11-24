@@ -1575,6 +1575,16 @@ def test_the_blocker_at_a_question_with_no_clock():
         assert ("late", "y") in model.given and model.question == 1, (bursts, model.given)
 
 
+def test_an_escape_dropped_in_a_wait_still_reaches_the_key_guard():
+    model = QuestionModel()
+    keys, win = _keys(model, "")
+    keys.burst(C(OPEN + "a" + CLOSE + "\x1b"), 0.0)  # the Escape is dropped in the wait after the paste
+    keys.burst(C("["), 0.8)  # the wait is over; the rest of the Escape's sequence comes late
+    keys.burst(C("D"), 0.85)
+    assert not any(given[0] in ("[", "D") for given in model.given), model.given
+    assert ("note", scr.BROKEN) in model.given, model.given
+
+
 def test_a_burst_has_a_limit_and_no_resize():
     win = PretendWindow([ord("a")] * 70000)
     codes, resized = scr.read_burst(win)
@@ -2182,6 +2192,24 @@ def test_the_blocker_in_separate_writes():
             run.end()
 
 
+def test_a_paste_cut_after_its_last_escape_sets_nothing():
+    run = _unlocked_face()
+    try:
+        before = ask("SQ 0")
+        t0 = time.monotonic()
+        run.press(OPEN + "hi" + CLOSE + "y\x1b")  # the bytes cut after the last Escape
+        time.sleep(0.8)  # the link stalls past the wait after the paste
+        run.press("[201~")
+        run.shows("A broken key sequence was dropped.", 22, 5)
+        run.soak(1.0)
+        assert ask("SQ 0") == before, f"the bracket changed the squelch: {ask('SQ 0')}"
+        assert not any(l.startswith("SQ 0,") for l in run.cmd.lines_since(t0)), run.cmd.lines_since(t0)
+        assert run.term.text(23) == "Tab band. Up, Down tune. V view. ? help", f"a typing line opened: {run.dump()}"
+        run.quit_cleanly("Q")
+    finally:
+        run.end()
+
+
 def test_a_paste_then_letters_in_the_wait_set_nothing():
     run = _unlocked_face()
     try:
@@ -2311,6 +2339,7 @@ def main():
                test_the_paste_guard_never_changes_what_the_key_guard_does, test_the_wait_after_a_paste,
                test_the_blocker_at_a_question_with_no_clock, test_a_burst_has_a_limit_and_no_resize,
                test_the_quiet_time_asks_the_clock_when_a_key_is_handled, test_draining_takes_a_paste_to_the_model,
+               test_an_escape_dropped_in_a_wait_still_reaches_the_key_guard,
                test_the_loops_work_for_one_key_drains_when_the_question_changes, test_urgent_threads_one_of_each_kind,
                test_escdelay_default, test_tool_arguments,
                test_check_with_no_terminal_and_no_daemon, test_help_and_bad_options,
@@ -2336,7 +2365,7 @@ def main():
                    test_a_marked_paste_at_a_question_leaves_it_open, test_an_open_paste_never_eats_an_unkey,
                    test_an_escape_then_a_bracket_alone_sets_nothing, test_the_blocker_at_the_unlock_question,
                    test_the_blocker_in_separate_writes, test_a_paste_then_letters_in_the_wait_set_nothing,
-                   test_a_late_lock_key_while_locked_does_nothing):
+                   test_a_late_lock_key_while_locked_does_nothing, test_a_paste_cut_after_its_last_escape_sets_nothing):
             test(fn)
     finally:
         stop_test_bed(bed)

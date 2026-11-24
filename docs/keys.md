@@ -28,7 +28,9 @@ These never change, and they mean the same in every view and every mode.
   Escape or the memory key goes back.
 
 A paste that comes with the terminal's marks is not keys. In a typing line it is text, and
-elsewhere it is dropped with `A paste was dropped.` See [Pasting](d750ctrl.md#pasting).
+elsewhere it is dropped with `A paste was dropped.` Inside or right after a paste only an unkey key
+unkeys and a lock key locks, and every other key is dropped for half a second ("A key after a paste
+was dropped."). See [Pasting](d750ctrl.md#pasting).
 
 The keys of `unkey` and `lock` are special, because they stop transmitting:
 

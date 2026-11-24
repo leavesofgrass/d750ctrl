@@ -86,9 +86,13 @@ for how to pick one and [d750ctrl](d750ctrl.md) for the rest.
   out and while a tool has the terminal. A marked paste is never keys: in a typing line it is text
   ("Pasted 14 characters. Enter applies."), and anywhere else it is dropped ("A paste was dropped.").
   It never answers a question, never presses Enter and never changes the radio. Pasting a line of
-  text into "Text to send:" is the supported way. The caveat is left only for a terminal that sends
-  no marks, or a mark the link cuts from its text by more than a second: there a paste that pauses
-  for half a second or more and then has a small y could still answer a send question.
+  text into "Text to send:" is the supported way. A key that comes inside or right after a paste can
+  only unkey, or lock when PTT is not locked. Every other key is dropped for half a second (two
+  seconds after an Escape), and the message row says "A key after a paste was dropped." What is left:
+  a marked paste can only add text to a typing line, unkey, or lock. Beyond that it takes a link that
+  stalls inside a paste for more than a second or two, which makes the rest of the paste keys. A
+  terminal that sends no marks pastes as keys, and there a paste that pauses for half a second or
+  more and then has a small y could still answer a send question.
 - **The keys of unkey and lock** act in help, in the memory list and at every question. A frame or a
   send is refused while PTT is locked or its state is not known.
 - **A window that is too small** shows one row that says so. The list needs 40 by 8, the compact view

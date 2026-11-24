@@ -156,9 +156,12 @@ question stays, and the message row says "Too fast. Answer again." A stream of k
 never answers a question, and keys typed ahead of a question are thrown away. The screen also asks
 the terminal to mark pastes. A paste that comes with its marks is never keys, so it cannot answer a
 question. In "Text to send:" it is text: pasting a line of RTTY text there is the supported way, and
-the message row says "Pasted 14 characters. Enter applies." The caveat is left only for a terminal
-that sends no marks, or a mark the link cuts from its text by more than a second: there a paste that
-pauses for half a second or more and then has a small `y` could still answer a send question.
+the message row says "Pasted 14 characters. Enter applies." A key that comes inside or right after a
+paste can only unkey, or lock when PTT is not locked; every other key is dropped for half a second.
+What is left: a marked paste can only add text to a typing line, unkey, or lock. Beyond that it takes
+a link that stalls inside a paste for more than a second or two, which makes the rest of the paste
+keys. A terminal that sends no marks pastes as keys, and there a paste that pauses for half a second
+or more and then has a small `y` could still answer a send question.
 
 ## Settings
 

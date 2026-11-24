@@ -547,6 +547,11 @@ class SequenceGuard:
         """Clear what is remembered of the last Escape: it was the start of a paste, not a key."""
         self.escape_at = None
 
+    def saw_escape(self, at):
+        """An Escape came at at that was dropped after a paste: remember it, and do nothing else,
+        so that the rest of its sequence is still dropped if the link stalls after it."""
+        self.escape_at = at
+
 
 # --------------------------------------------------------------------------- pastes
 
@@ -1014,9 +1019,12 @@ def read_burst(win, first=None):
     return codes, resized
 
 
-def late(code, model, hand):
+def late(code, model, hand, guard=None, at=None):
     """A code inside or right after a paste: model.late() says what it does (unkey unkeys, lock
-    locks when not locked, anything else nothing)."""
+    locks when not locked, anything else nothing). An Escape among them, which came at at, is
+    told to the key guard, so that the rest of its sequence is still dropped."""
+    if code == ESC and guard is not None and at is not None:
+        guard.saw_escape(at)
     return hand(model.late(key_name(code)))
 
 
@@ -1026,21 +1034,22 @@ def say_notes(paste, model):
         model.note(paste.notes.pop(0))
 
 
-def drain(win, guard, model, hand, now, paste=None, items=None):
-    """Drain typed-ahead keys: first the items left in the burst in hand, then every key that is
-    ready, read with no waiting through the same paste guard. A key goes through the key guard
-    and key naming as usual; the model gets only those for which model.urgent(name) is True,
-    as early keys, and the rest are dropped. A paste goes to model.paste. True when a thing to
-    do was Quit."""
+def drain(win, guard, model, hand, now, paste=None, items=None, at=None):
+    """Drain typed-ahead keys: first the items left in the burst in hand, which came at at, then
+    every key that is ready, read with no waiting through the same paste guard. A key goes
+    through the key guard and key naming as usual; the model gets only those for which
+    model.urgent(name) is True, as early keys, and the rest are dropped. A paste goes to
+    model.paste. True when a thing to do was Quit."""
     paste = paste or PasteGuard()
     pending = items if items is not None else []
+    came = [now() if at is None else at]  # when the burst in hand came
 
     def one(item):
         if item[0] == "paste":
             guard.forget()
             return hand(model.paste(item[1], item[2]))
         if item[0] == "late":
-            return late(item[1], model, hand)
+            return late(item[1], model, hand, guard, came[0])
         code, _broken = guard.take(item[1], item[2])  # the key guard gets the time the code came
         name = None if code is None else key_name(code)
         if name is not None and model.urgent(name):
@@ -1054,7 +1063,8 @@ def drain(win, guard, model, hand, now, paste=None, items=None):
         codes, _resized = read_burst(win)
         if not codes:
             return False
-        pending.extend(paste.take(codes, now()))
+        came[0] = now()
+        pending.extend(paste.take(codes, came[0]))
         say_notes(paste, model)
 
 
@@ -1133,14 +1143,16 @@ class Keys:
         self.clock = clock
         self.paste = paste or PasteGuard()
         self.items = []  # what is left of the burst in hand
+        self.at = None  # when the burst in hand came
         self.question = 0
 
     def drain(self):
         """Drain: the rest of the burst in hand first, then what curses has ready."""
-        return drain(self.win, self.guard, self.model, self.hand, self.clock, self.paste, self.items)
+        return drain(self.win, self.guard, self.model, self.hand, self.clock, self.paste, self.items, self.at)
 
     def burst(self, codes, now):
         """A burst the loop read, at now. True when a thing to do was Quit."""
+        self.at = now
         self.items.extend(self.paste.take(codes, now))
         done = self._run()
         say_notes(self.paste, self.model)
@@ -1162,7 +1174,7 @@ class Keys:
                 self.guard.forget()
                 done = self.hand(self.model.paste(item[1], item[2])) or self.watch()
             else:
-                done = late(item[1], self.model, self.hand) or self.watch()
+                done = late(item[1], self.model, self.hand, self.guard, self.at) or self.watch()
             if done:
                 return True
         return False

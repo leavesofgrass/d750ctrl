@@ -111,9 +111,11 @@ logged once and then counted: one line a minute says "repeated N more times". Se
 - Why: a question takes no answer in its first half second, and a stream of keys, such as a paste,
   never answers one. Keys typed ahead of a question are thrown away, except the keys of unkey and lock.
 - What to do: wait a moment, then press the small letter `y` once. With a terminal that marks
-  pastes, a paste cannot answer a question. The caveat is left only for a terminal that sends no
-  marks, or a mark the link cuts from its text by more than a second: there a paste that pauses for
-  half a second or more and then has a small `y` could still answer a send question.
+  pastes, a paste cannot answer a question. What is left: a marked paste can only add text to a
+  typing line, unkey, or lock. Beyond that it takes a link that stalls inside a paste for more than
+  a second or two, which makes the rest of the paste keys. A terminal that sends no marks pastes as
+  keys, and there a paste that pauses for half a second or more and then has a small `y` could still
+  answer a send question.
 - What you see: "PTT state not read. Nothing sent." when you start a frame or a send.
 - Why: the screen does not know yet whether PTT is locked, so it sends nothing.
 - What to do: wait for the next read, or check that d750d answers.
@@ -138,6 +140,17 @@ logged once and then counted: one line a minute says "repeated N more times". Se
   "Pasted 14 characters. Enter applies.", or "some left out" when characters could not be typed. An
   unkey key still unkeys while a paste is open, and Escape ends a paste that hangs.
 - What to do: open the typing line first, paste, then press Enter.
+
+### "A key after a paste was dropped." and "A paste is open."
+
+- What you see: "A key after a paste was dropped." in the message row, or "A paste is open. Escape
+  ends it." at the first key of a paste that has not finished.
+- Why: after a paste no key acts for half a second, or two seconds when an Escape ended the paste. A
+  key in that time is dropped and starts the wait again, which never lasts more than five seconds.
+  So text that follows a paste's end is never keys. Only a key of unkey, and a key of lock when PTT
+  is not locked, act inside or right after a paste.
+- What to do: if Enter right after a paste did nothing, wait half a second and press it again. If a
+  paste hangs, press Escape.
 
 ### My terminal does not mark pastes
 
