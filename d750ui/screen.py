@@ -558,6 +558,11 @@ MARK_SECONDS = 1.0  # a mark cut by the link must go on within this
 PASTE_SECONDS = 2.0  # a paste with no end mark ends when this passes with nothing more
 PASTE_MOST = 4096  # characters kept of a paste
 BURST_MOST = 65536  # codes read in one burst
+WAIT_AFTER_MARK = 0.5  # after an end mark, no key acts for this long, started again by each code
+WAIT_AFTER_ESCAPE = 2.0  # the same after an Escape ended a paste
+WAIT_MOST = 5.0  # a wait never lasts longer than this in all
+OPEN_WORDS = "A paste is open. Escape ends it."
+WAIT_WORDS = "A key after a paste was dropped."
 LINE_ENDS = (9, 10, 13)  # a tab, a line end or a carriage return becomes one space
 
 
@@ -598,15 +603,21 @@ class PasteGuard:
     """Finds the marks of a bracketed paste in the bursts of codes curses gives. No clock, no curses.
 
     take(codes, now) is given each burst; poll(now) is called on every pass of the loop. Both
-    return items, in order: ("key", code, at) for a key that came at at; ("paste", text, left_out) for a whole
-    paste; ("late", code) for each code of an open paste that came in a later burst than its
-    start mark, so that the loop can still unkey.
+    return items, in order: ("key", code, at) for a key that came at at; ("paste", text,
+    left_out) for a whole paste; ("late", code) for each code of an open paste that came in a
+    later burst than its start mark, and for each code dropped in the wait after a paste, so
+    that the loop can still unkey. notes holds the words to say for what was dropped, each
+    once for each paste; the loop says them and empties it.
 
     An Escape that ends a burst is a key at once; when the next burst, within a second, starts
     with the rest of a start mark, the paste starts there. The characters of a mark the link
     cut are held until the next burst says what they are; after a second they go on as keys,
     or, inside a paste, as its text. Inside a paste, an Escape that ends a burst ends the
     paste and then acts as a key, and a paste with no end mark ends after two quiet seconds.
+
+    After a paste comes a wait in which no key acts: half a second after an end mark, two
+    seconds after an Escape ended the paste, each started again by every code that comes in
+    it, and never more than five seconds in all. A start mark in a wait starts a new paste.
     """
 
     def __init__(self):
@@ -619,7 +630,32 @@ class PasteGuard:
         # ([(code, when it came)] of a start mark seen after an Escape key, when the Escape came)
         self.start_seen = None
         self.end_seen = None  # (the part of an end mark seen after an Escape, inside a paste, when)
-        self.end_drop = None  # (the part of an end mark still to drop, when): after an Escape ended a paste
+        self.wait = None  # after a paste: [how long, when the last code came, when the wait began]
+        self.notes = []  # words to say, for the loop
+        self.said_open = self.said_wait = False  # each said once for each paste
+
+    def _late(self, items, codes, waiting=False):
+        """Late items: codes of an open paste from a later burst, or codes dropped in a wait."""
+        codes = list(codes)
+        if not codes:
+            return
+        items.extend(("late", code) for code in codes)
+        if waiting and not self.said_wait:
+            self.said_wait = True
+            self.notes.append(WAIT_WORDS)
+        elif not waiting and not self.said_open:
+            self.said_open = True
+            self.notes.append(OPEN_WORDS)
+
+    def _waiting(self, now):
+        """Is the wait after a paste still on?"""
+        if self.wait is None:
+            return False
+        span, last, began = self.wait
+        if now - last <= span and now - began <= WAIT_MOST:
+            return True
+        self.wait = None
+        return False
 
     # ----------------------------------------------------------------- what is held
 
@@ -636,8 +672,8 @@ class PasteGuard:
         self.left_out = True
         self.codes.extend(seen)
 
-    def _give(self, items):
-        """End the open paste and give it."""
+    def _give(self, items, now=None, wait=None):
+        """End the open paste and give it; then a wait of that many seconds, when given."""
         if self.end_seen is not None:
             self._release_end()
         text, left_out = paste_text(self.codes)
@@ -646,6 +682,7 @@ class PasteGuard:
         self.codes = []
         self.left_out = False
         self.last_at = None
+        self.wait = None if wait is None else [wait, now, now]
 
     def _start(self, now):
         self.open = True
@@ -653,6 +690,8 @@ class PasteGuard:
         self.left_out = False
         self.opened_in = self.bursts
         self.last_at = now
+        self.wait = None
+        self.said_open = self.said_wait = False
 
     # ----------------------------------------------------------------- the two calls
 
@@ -662,15 +701,6 @@ class PasteGuard:
         items = self.poll(now)
         i, n = 0, len(codes)
         # What the burst before left held.
-        if self.end_drop is not None and i < n:
-            rest, _at = self.end_drop
-            self.end_drop = None
-            got = tuple(codes[: len(rest)])
-            if got == rest:
-                i = len(rest)
-            elif got == rest[: len(got)] and len(got) == n:
-                self.end_drop = (rest[n:], now)
-                return items
         if self.start_seen is not None and i < n:
             seen, at = self.start_seen
             want = START_MARK[len(seen) :]
@@ -688,12 +718,12 @@ class PasteGuard:
             seen, _at = self.end_seen
             want = END_MARK[len(seen) - 1 :]
             got = tuple(codes[i : i + len(want)])
-            if self.bursts > self.opened_in:
-                items.extend(("late", code) for code in got if got == want[: len(got)])
+            if self.bursts > self.opened_in and got == want[: len(got)]:
+                self._late(items, got)
             if got == want:
                 self.end_seen = None
                 i += len(want)
-                self._give(items)
+                self._give(items, now, WAIT_AFTER_MARK)
             elif got == want[: len(got)] and i + len(got) == n:
                 self.end_seen = (seen + list(got), self.end_seen[1])
                 self.last_at = now
@@ -705,10 +735,16 @@ class PasteGuard:
             if not self.open:
                 if code == ESC:
                     after = tuple(codes[i + 1 : i + 1 + len(START_MARK)])
-                    if after == START_MARK:
+                    if after == START_MARK:  # a start mark, in a wait or not, starts a paste
                         self._start(now)
                         i += 1 + len(START_MARK)
                         continue
+                if self._waiting(now):  # in the wait after a paste: dropped, and the wait starts again
+                    self.wait[1] = now
+                    self._late(items, (code,), waiting=True)
+                    i += 1
+                    continue
+                if code == ESC:
                     items.append(("key", code, now))
                     if i + 1 + len(after) == n and _is_prefix(after, START_MARK):
                         # the mark may go on in the next burst
@@ -726,29 +762,29 @@ class PasteGuard:
                 after = tuple(codes[i + 1 : i + 1 + len(END_MARK)])
                 if after == END_MARK:
                     if late:
-                        items.extend(("late", c) for c in (code, *after))
+                        self._late(items, (code, *after))
                     i += 1 + len(END_MARK)
-                    self._give(items)
+                    self._give(items, now, WAIT_AFTER_MARK)
                     continue
                 if i + 1 == n:
                     if late:
-                        items.append(("late", code))
-                    self._give(items)  # an Escape that ends a burst ends the paste, then acts
+                        self._late(items, (code,))
+                    # an Escape that ends a burst ends the paste, then acts; a longer wait follows
+                    self._give(items, now, WAIT_AFTER_ESCAPE)
                     items.append(("key", code, now))
-                    self.end_drop = (END_MARK, now)
                     return items
                 if i + 1 + len(after) == n and _is_prefix(after, END_MARK):
                     if late:
-                        items.extend(("late", c) for c in (code, *after))
+                        self._late(items, (code, *after))
                     self.end_seen = ([code, *after], now)
                     return items
                 if late:
-                    items.append(("late", code))
+                    self._late(items, (code,))
                 self.left_out = True  # an Escape inside a paste is left out of its text
                 i += 1
                 continue
             if late:
-                items.append(("late", code))
+                self._late(items, (code,))
             self.codes.append(code)
             i += 1
         return items
@@ -757,8 +793,7 @@ class PasteGuard:
         items = []
         if self.start_seen is not None and now - self.start_seen[1] > MARK_SECONDS:
             self._release_start(items)
-        if self.end_drop is not None and now - self.end_drop[1] > MARK_SECONDS:
-            self.end_drop = None
+        self._waiting(now)
         if self.open and self.last_at is not None and now - self.last_at > PASTE_SECONDS:
             self._give(items)
         return items
@@ -979,12 +1014,16 @@ def read_burst(win, first=None):
     return codes, resized
 
 
-def late_unkey(code, model, hand):
-    """A code of a paste still open, from a later burst: a key of unkey unkeys at once."""
-    name = key_name(code)
-    if name is not None and model.unkeys(name):
-        return hand(model.unkey_now())
-    return False
+def late(code, model, hand):
+    """A code inside or right after a paste: model.late() says what it does (unkey unkeys, lock
+    locks when not locked, anything else nothing)."""
+    return hand(model.late(key_name(code)))
+
+
+def say_notes(paste, model):
+    """Say what the paste guard dropped, so that nothing is dropped in silence."""
+    while paste.notes:
+        model.note(paste.notes.pop(0))
 
 
 def drain(win, guard, model, hand, now, paste=None, items=None):
@@ -1001,7 +1040,7 @@ def drain(win, guard, model, hand, now, paste=None, items=None):
             guard.forget()
             return hand(model.paste(item[1], item[2]))
         if item[0] == "late":
-            return late_unkey(item[1], model, hand)
+            return late(item[1], model, hand)
         code, _broken = guard.take(item[1], item[2])  # the key guard gets the time the code came
         name = None if code is None else key_name(code)
         if name is not None and model.urgent(name):
@@ -1016,6 +1055,7 @@ def drain(win, guard, model, hand, now, paste=None, items=None):
         if not codes:
             return False
         pending.extend(paste.take(codes, now()))
+        say_notes(paste, model)
 
 
 URGENT_WAIT_SECONDS = 2.0  # how long a way out waits, in all, for an unkey or lock still out
@@ -1102,12 +1142,16 @@ class Keys:
     def burst(self, codes, now):
         """A burst the loop read, at now. True when a thing to do was Quit."""
         self.items.extend(self.paste.take(codes, now))
-        return self._run()
+        done = self._run()
+        say_notes(self.paste, self.model)
+        return done
 
     def poll(self, now):
         """On every pass of the loop: a mark or a paste that time has settled."""
         self.items.extend(self.paste.poll(now))
-        return self._run()
+        done = self._run()
+        say_notes(self.paste, self.model)
+        return done
 
     def _run(self):
         while self.items:
@@ -1118,7 +1162,7 @@ class Keys:
                 self.guard.forget()
                 done = self.hand(self.model.paste(item[1], item[2])) or self.watch()
             else:
-                done = late_unkey(item[1], self.model, self.hand) or self.watch()
+                done = late(item[1], self.model, self.hand) or self.watch()
             if done:
                 return True
         return False

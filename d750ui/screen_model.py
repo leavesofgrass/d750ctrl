@@ -1664,6 +1664,16 @@ class ScreenModel:
         """What unkey does in main mode, in any mode: what was typed, a question or a mode stay."""
         return [Unkey()]
 
+    def late(self, name):
+        """A key that came inside or right after a paste. A key of unkey unkeys; a key of lock locks
+        when the daemon says it is not locked; anything else does nothing. Nothing else changes."""
+        action = self.keymap.action(self.family, str(name))
+        if action == "unkey":
+            return [Unkey()]
+        if action == "lock" and self.locked is False and not self.no_daemon:
+            return self._send_set("lock", "lock")
+        return []
+
     def _finish_typing(self):
         self.mode = MAIN
         target = self.typing

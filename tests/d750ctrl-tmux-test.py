@@ -432,9 +432,32 @@ def pastes_through_tmux(env):
         wait_until(lambda: not bottom_row().endswith("146.52"))
         time.sleep(1.0)
         check("the pasted frequency was never applied", ask("FQ 0") == radio[0], ask("FQ 0"))
+        # The blocker: tmux's paste of text that holds an end mark and a y, at the unlock question.
+        client.press("L")
+        locked = wait_until(lambda: "; locked" in ask("state")) and wait_until(lambda: shows("PTT locked."))
+        time.sleep(1.5)
+        client.press("L")
+        asked = wait_until(lambda: bottom_row() == "Unlock PTT? y or n")
+        time.sleep(0.7)
+        tmux("set-buffer", "-b", "t750", "hi\x1b[201~y")
+        tmux("paste-buffer", "-p", "-b", "t750", "-t", "d750:rig")
+        time.sleep(1.5)
+        check("tmux's paste of an end mark and a y at the unlock question unlocks nothing",
+              locked and asked and "; locked" in ask("state") and bottom_row() == "Unlock PTT? y or n", dump())
+        time.sleep(0.7)
+        client.press("n")
+        wait_until(lambda: message_row() == "Still locked.")
+        time.sleep(0.7)
+        client.press("L")
+        wait_until(lambda: bottom_row() == "Unlock PTT? y or n")
+        time.sleep(0.7)
+        client.press("y")
+        check("the lock is taken off again", wait_until(lambda: "; unlocked" in ask("state")))
         client.press("Q")
         check("the screen quits after the pastes", wait_until(lambda: not server_up()))
     finally:
+        if "; locked" in ask("state"):
+            ask("unlock")
         client.end()
         tmux("kill-server")
 

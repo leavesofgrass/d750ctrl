@@ -858,6 +858,11 @@ def todays_run():
             run.wait_for(lambda: run.term.text(0).startswith(READY), "the screen back", 10)
             check("RTTY receive runs the tool in this terminal and comes back", "d750-rtty rx 60" in stub_log(),
                   "\n".join(stub_log()))
+            raw = bytes(run.term.raw)
+            ran = raw.find(b"stub d750-rtty rx 60")
+            run.wait_for(lambda: bytes(run.term.raw).find(PASTE_ON, ran) > ran, "paste on again after the tool", 5)
+            check("the tool gets the terminal with bracketed paste off, and it is on again after",
+                  ran > 0 and raw.rfind(PASTE_OFF, 0, ran) > raw.rfind(PASTE_ON, 0, ran), repr(raw[max(0, ran - 300):ran]))
         except Timeout as e:
             check("RTTY receive runs the tool in this terminal and comes back", False, str(e))
         run.press("x")
@@ -1389,12 +1394,9 @@ class PretendModel:
         self.given.append(("paste", text, left_out))
         return []
 
-    def unkeys(self, name):
-        return name in ("U", "u")
-
-    def unkey_now(self):
-        self.given.append(("unkey_now",))
-        return ["todo unkey"]
+    def late(self, name):
+        self.given.append(("late", name))
+        return ["todo late " + str(name)]
 
     def note(self, text):
         self.given.append(("note", text))
@@ -1461,7 +1463,7 @@ def test_the_paste_guard_never_changes_what_the_key_guard_does():
 
 def test_paste_guard_whole_pastes_and_keys_around_them():
     assert pasted([(OPEN + "hello world" + CLOSE, 0.0)]) == P("hello world")
-    assert pasted([("ab" + OPEN + "x" + CLOSE + "cd", 0.0)]) == K("ab") + P("x") + K("cd")
+    assert pasted([("ab" + OPEN + "x" + CLOSE + "cd", 0.0)]) == K("ab") + P("x") + LATE("cd"), "keys right after an end mark are dropped"
     assert pasted([(OPEN + "a" + CLOSE + OPEN + "b" + CLOSE, 0.0)]) == P("a") + P("b"), "two pastes in one burst"
     assert pasted([("\x1bq", 0.0)]) == K("\x1bq"), "an Escape and a key are keys"
     assert pasted([(OPEN + "a\x1bb" + CLOSE, 0.0)]) == P("ab", True), "an Escape inside is left out"
@@ -1492,13 +1494,13 @@ def test_paste_guard_an_end_mark_cut_at_every_point():
     for cut in range(1, len(CLOSE)):
         head, rest = CLOSE[:cut], CLOSE[cut:]
         items = pasted([(OPEN + "hi" + head, 0.0), (rest + "ab", 0.5)])
-        if cut == 1:  # an Escape that ends a burst ends the paste and acts; the rest of the mark is dropped
-            assert items == P("hi") + K("\x1b") + K("ab"), (cut, items)
+        if cut == 1:  # an Escape that ends a burst ends the paste and acts; what follows in two seconds is dropped
+            assert items == P("hi") + K("\x1b") + LATE(rest + "ab"), (cut, items)
         else:
-            assert items == LATE(rest) + P("hi") + K("ab"), (cut, items)
+            assert items == LATE(rest) + P("hi") + LATE("ab"), (cut, items)
         items = pasted([(OPEN + "hi" + head, 0.0), ("zz", 0.5), (None, 3.0)])
         if cut == 1:
-            assert items == P("hi") + K("\x1b") + K("zz"), (cut, items)
+            assert items == P("hi") + K("\x1b") + LATE("zz"), (cut, items)
         else:
             assert items == LATE("zz") + P("hi" + head[1:] + "zz", True), (cut, items)
 
@@ -1509,7 +1511,7 @@ def test_paste_guard_an_escape_then_a_start_mark():
     items = pasted([("\x1b", 0.0), ("[200~hi" + CLOSE, 1.5)])
     assert items == K("\x1b[200~hi\x1b[201~"), "after a second the rest are keys, for the key guard"
     items = pasted([(OPEN + "ab\x1b", 0.0), ("[201~", 0.3), ("c", 0.4)])
-    assert items == P("ab") + K("\x1b") + K("c"), "an end mark cut after its Escape is dropped"
+    assert items == P("ab") + K("\x1b") + LATE("[201~c"), "an end mark cut after its Escape is dropped"
 
 
 def test_paste_guard_a_paste_that_never_ends():
@@ -1532,7 +1534,74 @@ def test_paste_guard_text_and_what_is_left_out():
     burst = C(OPEN) + [ord("x")] * (scr.BURST_MOST - len(OPEN) - 3) + C(CLOSE[:3])
     assert len(burst) == scr.BURST_MOST
     items = pasted([(burst, 0.0), (CLOSE[3:] + "k", 0.2)])
-    assert items == LATE(CLOSE[3:]) + P("x" * 4096, True) + K("k"), items[-3:]
+    assert items == LATE(CLOSE[3:]) + P("x" * 4096, True) + LATE("k"), items[-3:]
+
+
+def test_the_wait_after_a_paste():
+    blocker = OPEN + "hi" + CLOSE + "y" + CLOSE
+    assert pasted([(blocker, 0.0)]) == P("hi") + LATE("y" + CLOSE), "an end mark in the text: the rest is dropped"
+    for gap in (0.05, 0.3):
+        assert pasted([(OPEN + "hi" + CLOSE, 0.0), ("y" + CLOSE, gap)]) == P("hi") + LATE("y" + CLOSE), gap
+    assert pasted([(OPEN + "hi" + CLOSE, 0.0), ("y", 0.6)]) == P("hi") + K("y"), "half a second after, keys act"
+    items = pasted([(OPEN + "a" + CLOSE, 0.0), ("b", 0.4), ("c", 0.8), ("d", 1.2), ("e", 1.8)])
+    assert items == P("a") + LATE("bcd") + K("e"), "each dropped code starts the wait again"
+    items = pasted([(OPEN + "a" + CLOSE, 0.0)] + [("x", i / 10) for i in range(1, 61)])
+    assert items == P("a") + LATE("x" * 50) + K("x" * 10), "a held key ends its wait after five seconds"
+    items = pasted([(OPEN + "a\x1b", 0.0), ("q", 1.5), ("r", 3.6)])
+    assert items == P("a") + K("\x1b") + LATE("q") + K("r"), "two seconds after an Escape ended the paste"
+    items = pasted([(OPEN + "a" + CLOSE + "x" + OPEN + "b" + CLOSE, 0.0)])
+    assert items == P("a") + LATE("x") + P("b"), "a start mark in a wait starts a new paste"
+    guard = scr.PasteGuard()
+    guard.take(C(OPEN + "a" + CLOSE + "xy"), 0.0)
+    guard.take(C("z"), 0.1)
+    assert guard.notes == [scr.WAIT_WORDS], "said once for each paste"
+    guard.notes.clear()
+    guard.take(C(OPEN + "b"), 1.0)
+    guard.take(C("c"), 1.1)
+    guard.take(C("d"), 1.2)
+    assert guard.notes == [scr.OPEN_WORDS], guard.notes
+
+
+def test_the_blocker_at_a_question_with_no_clock():
+    # At the place of the frame question: no y is ever written to a pretend terminal at a send question.
+    blocker = OPEN + "hi" + CLOSE + "y" + CLOSE
+    for bursts in ([(blocker, 1.0)], [(OPEN + "hi" + CLOSE, 1.0), ("y" + CLOSE, 1.05)],
+                   [(OPEN + "hi" + CLOSE, 1.0), ("y" + CLOSE, 1.3)]):
+        model = QuestionModel(question=1, mode="asking")
+        keys, win = _keys(model, "", question=1)
+        for codes, at in bursts:
+            keys.burst(C(codes), at)
+        assert not any(given[0] == "y" for given in model.given), (bursts, model.given)
+        assert ("late", "y") in model.given and model.question == 1, (bursts, model.given)
+
+
+def test_a_burst_has_a_limit_and_no_resize():
+    win = PretendWindow([ord("a")] * 70000)
+    codes, resized = scr.read_burst(win)
+    assert len(codes) == scr.BURST_MOST and len(win.codes) == 70000 - scr.BURST_MOST and not resized
+    win = PretendWindow([ord("a"), curses.KEY_RESIZE, ord("b")])
+    assert scr.read_burst(win, ord("x")) == ([ord("x"), ord("a"), ord("b")], True)
+
+
+def test_the_quiet_time_asks_the_clock_when_a_key_is_handled():
+    clock = [10.0]
+    model = QuestionModel()
+    keys = scr.Keys(PretendWindow([]), model, lambda todos: False, clock=lambda: clock[0])
+    model.question, model.mode = 1, "asking"
+    keys.watch()  # the question opens at 10.0
+    clock[0] = 10.4
+    keys.burst(C("x"), 10.0)  # read at 10.0, handled at 10.4: the quiet time starts again at 10.4
+    clock[0] = 10.7
+    keys.burst(C("x"), 10.7)
+    assert model.given == [("x", True), ("x", True)], model.given
+
+
+def test_draining_takes_a_paste_to_the_model():
+    model = PretendModel()
+    items = [("paste", "ab", False), ("key", ord("m"), 1.0), ("key", ord("U"), 1.0)]
+    scr.drain(PretendWindow([]), scr.SequenceGuard(), model, lambda todos: False, lambda: 1.0,
+              scr.PasteGuard(), items)
+    assert model.given == [("paste", "ab", False), ("U", True)], model.given
 
 
 def test_keys_take_pastes_and_an_open_paste_never_eats_an_unkey():
@@ -1541,10 +1610,9 @@ def test_keys_take_pastes_and_an_open_paste_never_eats_an_unkey():
         keys, win = _keys(model, "")
         keys.burst(C(OPEN + "ab"), 1.0)
         keys.burst(C("U"), 1.1)
-        assert ("unkey_now",) in model.given and ("U", False) not in model.given, (mode, model.given)
-        before = len(model.given)
+        assert model.given == [("late", "U"), ("note", scr.OPEN_WORDS)], (mode, model.given)
         keys.burst(C("L"), 1.2)
-        assert model.given[before:] == [], ("lock does not act", mode, model.given)
+        assert model.given[2:] == [("late", "L")], ("a late key goes to model.late, said once", mode, model.given)
         keys.poll(4.0)
         assert model.given[-1] == ("paste", "abUL", False), (mode, model.given)
     model = QuestionModel()
@@ -1555,7 +1623,7 @@ def test_keys_take_pastes_and_an_open_paste_never_eats_an_unkey():
     keys, win = _keys(model, "")
     keys.burst(C("\x1b"), 1.0)
     keys.burst(C("[200~x" + CLOSE), 1.2)
-    keys.burst(C("["), 1.3)
+    keys.burst(C("["), 1.8)  # after the wait, inside the second after the Escape
     assert model.given == [("esc", False), ("paste", "x", False), ("[", False)], \
         ("a bracket after a paste is a key, not a broken sequence", model.given)
 
@@ -2061,6 +2129,103 @@ def test_an_open_paste_never_eats_an_unkey():
         run.end()
 
 
+def _lock_and_ask(run):
+    """Lock, then open the unlock question. Returns when it shows."""
+    run.press("L")
+    assert wait_until(lambda: "; locked" in ask("state")), "not locked"
+    run.wait_for(lambda: run.term.text(0).startswith("d750ctrl. Receiving. PTT locked."), "PTT locked", 5)
+    run.soak(1.5)  # a read that was out before the lock came back can say unlocked for a moment
+    run.press("L")
+    run.shows("Unlock PTT? y or n", 23, 5)
+    run.soak(0.7)
+
+
+def _still_locked_then_unlock(run):
+    run.soak(1.5)
+    assert "; locked" in ask("state"), "the paste unlocked"
+    assert run.term.text(23) == "Unlock PTT? y or n", f"the question went:\n{run.dump()}"
+    answer(run, "n")
+    run.shows("Still locked.", 22, 5)
+    run.soak(0.7)
+    run.press("L")
+    run.shows("Unlock PTT? y or n", 23, 5)
+    answer(run, "y")
+    assert wait_until(lambda: "; unlocked" in ask("state")), "not unlocked"
+
+
+def test_the_blocker_at_the_unlock_question():
+    run = _unlocked_face()
+    try:
+        _lock_and_ask(run)
+        run.press(OPEN + "hi" + CLOSE + "y" + CLOSE)  # one write: a paste whose text holds an end mark and a y
+        _still_locked_then_unlock(run)
+        run.quit_cleanly("Q")
+    finally:
+        if "; locked" in ask("state"):
+            ask("unlock")
+        run.end()
+
+
+def test_the_blocker_in_separate_writes():
+    for gap in (0.05, 0.3):
+        run = _unlocked_face()
+        try:
+            _lock_and_ask(run)
+            run.press(OPEN + "hi" + CLOSE)
+            time.sleep(gap)
+            run.press("y" + CLOSE)
+            _still_locked_then_unlock(run)
+            run.quit_cleanly("Q")
+        finally:
+            if "; locked" in ask("state"):
+                ask("unlock")
+            run.end()
+
+
+def test_a_paste_then_letters_in_the_wait_set_nothing():
+    run = _unlocked_face()
+    try:
+        radio = [ask(line) for line in ("MD 0", "PC 0", "BC")]
+        t0 = time.monotonic()
+        run.press(OPEN + "x" + CLOSE)
+        time.sleep(0.2)
+        run.press("mpb")
+        run.shows("A key after a paste was dropped.", 22, 5)
+        run.soak(1.5)
+        assert [ask(line) for line in ("MD 0", "PC 0", "BC")] == radio, "a letter after the paste changed the radio"
+        assert [l for l in run.cmd.lines_since(t0) if "," in l] == [], run.cmd.lines_since(t0)
+        run.quit_cleanly("Q")
+    finally:
+        run.end()
+
+
+def test_a_late_lock_key_while_locked_does_nothing():
+    run = _unlocked_face()
+    try:
+        _lock_and_ask(run)
+        answer(run, "n")
+        run.shows("Still locked.", 22, 5)
+        run.soak(0.7)
+        run.press(OPEN + "abc")  # a paste left open
+        run.soak(0.3)
+        run.press("L")  # the lock key, late in the paste, while locked
+        run.shows("A paste is open. Escape ends it.", 22, 5)
+        run.soak(1.0)
+        assert run.term.text(23) != "Unlock PTT? y or n", "the late lock key asked to unlock"
+        assert "; locked" in ask("state")
+        run.shows("A paste was dropped.", 22, 5)
+        run.soak(0.7)
+        run.press("L")
+        run.shows("Unlock PTT? y or n", 23, 5)
+        answer(run, "y")
+        assert wait_until(lambda: "; unlocked" in ask("state")), "not unlocked"
+        run.quit_cleanly("Q")
+    finally:
+        if "; locked" in ask("state"):
+            ask("unlock")
+        run.end()
+
+
 def test_an_escape_then_a_bracket_alone_sets_nothing():
     run = _unlocked_face()
     try:
@@ -2143,7 +2308,9 @@ def main():
                test_paste_guard_an_end_mark_cut_at_every_point, test_paste_guard_an_escape_then_a_start_mark,
                test_paste_guard_a_paste_that_never_ends, test_paste_guard_text_and_what_is_left_out,
                test_keys_take_pastes_and_an_open_paste_never_eats_an_unkey, test_check_and_help_write_no_paste_bytes,
-               test_the_paste_guard_never_changes_what_the_key_guard_does,
+               test_the_paste_guard_never_changes_what_the_key_guard_does, test_the_wait_after_a_paste,
+               test_the_blocker_at_a_question_with_no_clock, test_a_burst_has_a_limit_and_no_resize,
+               test_the_quiet_time_asks_the_clock_when_a_key_is_handled, test_draining_takes_a_paste_to_the_model,
                test_the_loops_work_for_one_key_drains_when_the_question_changes, test_urgent_threads_one_of_each_kind,
                test_escdelay_default, test_tool_arguments,
                test_check_with_no_terminal_and_no_daemon, test_help_and_bad_options,
@@ -2167,7 +2334,9 @@ def main():
                    test_an_unkey_in_a_paste_ends_the_question_and_the_rest_is_dropped,
                    test_a_marked_paste_at_a_typing_line_is_text_only, test_a_marked_paste_in_the_face_sets_nothing,
                    test_a_marked_paste_at_a_question_leaves_it_open, test_an_open_paste_never_eats_an_unkey,
-                   test_an_escape_then_a_bracket_alone_sets_nothing):
+                   test_an_escape_then_a_bracket_alone_sets_nothing, test_the_blocker_at_the_unlock_question,
+                   test_the_blocker_in_separate_writes, test_a_paste_then_letters_in_the_wait_set_nothing,
+                   test_a_late_lock_key_while_locked_does_nothing):
             test(fn)
     finally:
         stop_test_bed(bed)

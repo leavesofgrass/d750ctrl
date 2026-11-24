@@ -62,6 +62,11 @@ def asks(todos, why=None):
     return [t for t in todos if isinstance(t, sm.Ask) and (why is None or t.why == why)]
 
 
+def model_state(m):
+    """What a paste or a late key must leave as it was."""
+    return (m.mode, m.question, m.asked, m.focus, m.active, m.view, m.typed, m.help_focus, m.mem_focus)
+
+
 def differs_only_in_message(before, after, height):
     """Two frames the same but for the message row, the second from the bottom."""
     if (before.cursor, before.focus_row, before.marks) != (after.cursor, after.focus_row, after.marks):
@@ -1028,6 +1033,21 @@ class Safety(Frames):
             self.assertEqual(differs_only_in_message(frame, m.frame(width, height), height), True)
         self.check_frame(m, width, height)
 
+    def walk_late(self, r, key):
+        """A key late after a paste: it never answers, never unlocks, never sets but a lock."""
+        m = r.model
+        state = model_state(m)
+        unlocked = m.locked is False and not m.no_daemon
+        todos = m.late(key)
+        allowed = [[]]
+        if m.urgent(key) and m.unkeys(key):
+            allowed.append([sm.Unkey()])
+        if m.urgent(key) and not m.unkeys(key) and unlocked:
+            allowed.append([sm.Set("lock")])
+        self.assertIn(todos, allowed, key)
+        self.assertEqual(model_state(m), state, ("a late key changed something", key))
+        r.run(todos)
+
     def walk(self, view, keymap, seed):
         rng = random.Random(seed)
         pool = ["up", "down", "left", "right", "pgup", "pgdn", "home", "end", "enter", "esc", "space", "tab",
@@ -1049,6 +1069,10 @@ class Safety(Frames):
                 continue
             if rng.random() < 0.08:
                 self.walk_paste(r, rng, width, height)
+                continue
+            if rng.random() < 0.06:
+                self.walk_late(r, key)
+                self.check_frame(r.model, width, height)
                 continue
             before = (r.model.mode, r.model.asked)
             small = sm.shows(r.model.view, width, height) is None
@@ -1363,6 +1387,38 @@ class Pastes(Frames):
         r.tick(2.5)
         r.press("q")
         self.dropped(r)
+
+    def test_a_late_key_in_every_mode(self):
+        modes = ((), (":", "A"), ("?",), ("C",), ("c",), ("c", "c"), ("k",), ("t",), ("S",), ("S", "s"),
+                 ("R", "s", "x"), ("1",), ("L", "L"))
+        for view in sm.VIEWS:
+            for keys in modes:
+                r = sized(view)
+                r.press(*keys)
+                m = r.model
+                state = model_state(m)
+                locked = m.locked
+                self.assertEqual(m.late("U"), [sm.Unkey()], (view, keys))
+                self.assertEqual(m.late("u"), [] if view == "list" else [sm.Unkey()], (view, keys))
+                self.assertEqual(m.late("L"), [] if locked else [sm.Set("lock")], (view, keys))
+                for key in ("y", "n", "Y", "enter", "esc", "c", "b", "r", "s", "q", "Q", "V", "1", "space", "up"):
+                    self.assertEqual(m.late(key), [], (view, keys, key))
+                self.assertEqual(model_state(m), state, (view, keys))
+        r = Runner(start=False, view="face")
+        self.assertIsNone(r.model.locked)
+        self.assertEqual(r.model.late("L"), [], "lock state not known")
+        self.assertEqual(r.model.late("U"), [sm.Unkey()])
+        r = sized("face")
+        r.daemon.answering = False
+        r.tick(0.6)
+        self.assertTrue(r.model.no_daemon)
+        self.assertEqual(r.model.late("L"), [], "the daemon does not answer")
+        r = sized("face", keymap=km.Keymap([(1, "unkey", "F5"), (2, "lock", "j")]))
+        r.press("c", "c")
+        self.assertEqual(r.model.late("f5"), [sm.Unkey()])
+        self.assertEqual(r.model.late("j"), [sm.Set("lock")])
+        self.assertEqual(r.model.late("U"), [])
+        self.assertEqual(r.model.asked, "frame_send", "a late key never answers")
 
     def test_unkeys_and_unkey_now(self):
         face, listed = sized("face").model, sized("list").model
