@@ -66,7 +66,10 @@ d750 ptt off
 d750 unlock
 ```
 
-`d750 lock` unkeys the radio and makes d750d refuse every key request until you unlock.
+`d750 lock` unkeys the radio and makes d750d refuse every key request until you unlock. It also
+refuses turning VOX on and putting the TNC into APRS or KISS mode, but it does not stop KISS frames
+through a TNC already in KISS mode; `d750-aprs transmit off` does that. See [what lock
+covers](d750d.md#what-lock-covers-and-what-it-does-not).
 `d750 ptt off` unkeys the radio now. In the rig screen capital L locks at once, and asks "Unlock PTT? y or n"
 before it unlocks. The letter u unkeys in the face and compact views, and capital U in every view.
 The screen's raw command line (the colon) refuses `lock` and `unlock`.

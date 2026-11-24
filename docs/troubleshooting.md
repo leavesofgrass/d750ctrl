@@ -99,11 +99,76 @@ logged once and then counted: one line a minute says "repeated N more times". Se
 
 ### Keying is refused
 
-- What you see: "ERR TX is not allowed on this port; keying goes through 4532" from `d750 raw TX`,
-  or the answer "RPRT -1" to a key request.
-- Why: d750d refuses keying commands on port 4533, so only PTT on 4532 keys the radio. The second
-  case is also what you get while the transmitter is locked.
-- What to do: use the proper PTT path. Run `d750 unlock` if you locked it on purpose.
+- What you see: "ERR TX is not allowed on this port" from `d750 raw TX`, or from `d750 raw TX0` or
+  any line whose first two characters are TX.
+- Why: d750d refuses keying commands on port 4533, so only PTT on 4532 keys the radio. It judges a
+  command by its first two characters, whatever follows.
+- What to do: key through port 4532 with a Hamlib program. Unkey with `d750 ptt off`.
+
+- What you see: the answer "RPRT -1" to a key request.
+- Why: PTT is locked. A `T` with a value other than 0, 1, 2 or 3, a line with a control character
+  in it or over 512 characters, and a frequency or level that is not a number get "RPRT -1" too.
+- What to do: run `d750 state`. If it says locked, run `d750 unlock` if you locked it on purpose.
+  If it says unlocked, read `d750 log`: it names the lines refused for a control character or their
+  length.
+
+### The command port refuses a line
+
+d750d checks each line on port 4533 whole, before any of it reaches the radio. Each refusal has its
+own words:
+
+- What you see: "ERR a line may not start with a digit".
+- Why: the line starts with a digit, such as `0M` or `0G`, which enter the radio's programming and
+  service modes.
+- What to do: nothing. The tools never need those modes.
+
+- What you see: "ERR say the word alone, in small letters".
+- Why: one of the daemon's words, state, lock, unlock, reconnect or quit, came in capitals, with
+  spaces around it, or with more after it, such as `UNLOCK` or `lock now`.
+- What to do: send the word alone in small letters, or use `d750 state`, `d750 lock` and
+  `d750 unlock`.
+
+- What you see: "ERR only plain letters, digits, spaces and , . - / + are allowed".
+- Why: the line held another character: a carriage return inside the line, a semicolon, a tab,
+  another control character, or a mark such as `_` or `*`.
+- What to do: send one command per line with only those characters. A line ending in a carriage
+  return and a newline is fine.
+
+- What you see: "ERR the line is longer than 512 characters".
+- Why: no Kenwood command is that long, so the line is not a command.
+- What to do: check what the program sends.
+
+### A change is refused while PTT is locked
+
+- What you see: "ERR VX is refused while PTT is locked", or the same with TN or PT, from
+  `d750 raw`. From `d750 vox on`, `d750 tnc aprs`, `d750 tnc kiss` or `d750 fixup`, the same words
+  after "Fail:".
+- Why: lock refuses more than keying. It also refuses what would let the radio send by itself:
+  VOX on, the TNC in APRS or KISS mode, and any change to the beacon method. `d750 fixup` stops at
+  that line.
+- What to do: run `d750 unlock`, then the verb again. Turning VOX or the TNC off works while locked.
+
+What lock covers, and what it does not, in plain words:
+
+- Covered: keying through port 4532 by any program; turning VOX on; putting the TNC into APRS or
+  KISS mode; changing the beacon method.
+- Not covered: settings already in place, such as VOX that is on or a TNC already in KISS mode;
+  KISS frames that d750-aprs or a KISS program sends through a TNC already in KISS mode (use
+  `d750-aprs transmit off`); the radio's own front panel and microphone.
+- After the radio restarts while locked, d750-aprs cannot put the TNC back in KISS mode: its reset
+  turns the TNC off and is then refused, so the TNC stays off. Unlock, then run `d750 tnc kiss B`
+  or `d750 fixup`.
+
+The full account is on the [d750d page](d750d.md#what-lock-covers-and-what-it-does-not).
+
+### d750 lock says the radio did not say it is receiving
+
+- What you see: "OK locked; the radio did not say it is receiving" from `d750 lock`, or
+  "Locked. The radio did not confirm RX." on the rig screen.
+- Why: d750d sent the unkey command as part of the lock, and the radio did not answer with RX. The
+  lock holds all the same.
+- What to do: look at the radio, and read `d750 state` and `d750 log`. If the radio is still
+  transmitting, switch it off.
 
 ### The rig screen will not take my y
 
@@ -128,6 +193,14 @@ logged once and then counted: one line a minute says "repeated N more times". Se
   seconds for d750d to answer it, and d750d did not answer in that time.
 - What to do: run `d750 state` to see whether the radio is keyed and whether PTT is locked. Run
   `d750 lock` again if you wanted the lock.
+
+### The rig screen says "PTT is no longer locked."
+
+- What you see: "PTT is no longer locked." in the message row, and the top row says Unlocked.
+- Why: the lock went away without this screen's unlock: another program, such as `d750 unlock`,
+  unlocked it, or d750d started again, and a new daemon starts unlocked. The screen says it once.
+- What to do: press the lock key, capital `L` by default, if you still want the lock. Run
+  `d750 log` to see whether the daemon started again.
 - One more thing: an unkey and Ctrl+C that arrive in the same burst lose the unkey, because the
   terminal throws waiting keys away at Ctrl+C. Press unkey first, then quit.
 
@@ -199,6 +272,9 @@ logged once and then counted: one line a minute says "repeated N more times". Se
   minutes after every return of its port, trying once more a minute later if the radio does not
   confirm. The log says whether it was confirmed. If the radio still sends nothing, switch it off
   and on.
+- If PTT was locked, the reset cannot finish: "TNC reset tried twice after the radio came back: the
+  radio did not confirm it." in the d750-aprs log, and the TNC is left off. Run `d750 unlock`, then
+  `d750 tnc kiss B`.
 
 ### The radio is receiving but not transmitting, with nothing on its display
 

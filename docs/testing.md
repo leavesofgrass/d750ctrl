@@ -50,16 +50,44 @@ D750_CMD_PORT=4543 D750_PTT_PORT=4542 d750 status
 
 - `tests/tests.sh`: the `d750` verbs and d750d, against the test bed. It runs every verb and
   checks the answers, the dry runs, the refusals, the lock and keying through the Hamlib port, the
-  rigctl commands (a handshake, frequency, mode, VFO, levels and an extended reply), what d750d logs
+  rigctl commands (a handshake, frequency, mode, VFO, levels and an extended reply), lines the
+  command port refuses whole, such as a carriage return inside a line, checked to reach the
+  simulator not at all, the dry runs of `lock`, `unlock`, `ptt off` and `raw`, what d750d logs
   and what it leaves out, the firmware line of `d750 doctor`, the keying that `d750-sstv tx` and
   `d750-rtty tx` use (the radio stays keyed for the whole block and is unkeyed after it), and a
   daemon started with no radio. It needs the test bed running, `d750`
   on the PATH, `nc` and `rigctl`. It uses a settings folder of its own, so your `fixup.conf` and
   your call sign stay out of it.
+- `python3 -I tests/d750d-test.py`: d750d's rules for what a line may hold, through its own two
+  ports. The simulator runs inside the test, and d750d runs against it on two ports the test picks,
+  never the station's ports; the test checks both before the daemon starts. It holds:
+  - lines the command port refuses, locked and unlocked, each checked to reach the simulator not at
+    all: control characters, a carriage return or a semicolon inside a line, a line that starts with
+    a digit, a line over 512 characters, the refused commands with anything after them, and daemon
+    words in capitals or with more after them; and the words of each refusal;
+  - `VX`, `TN` and `PT` changes, refused while locked only, and their reads, which pass;
+  - lines the rigctl port refuses: `T` values other than 0 to 3, frequencies and levels that are
+    not finite numbers, control characters and long lines;
+  - keying: `T` keys only with 1 to 3 and only unlocked, `lock` sends the unkey whether or not the
+    radio is keyed, a lock the radio does not confirm still holds and says so, and an unkey the radio
+    does not confirm leaves the radio counted as keyed;
+  - what the programs here send in ordinary use still passes: the daemon's words, the rig screen's
+    sets, d750-aprs's TNC reset, the probe, the Hamlib handshake, a memory import with carriage
+    returns at the line ends, and the verbs;
+  - that `tests/fakedaemon.py` refuses the same lines as the real daemon;
+  - that `d750 -n lock`, `-n unlock`, `-n ptt off` and `-n raw` connect to nothing, and that
+    `d750 lock` and `unlock` exit 1 on an `ERR` answer.
+
+  It needs `pyserial` and `bash`. It needs no test bed, and can run beside one, since its ports
+  differ. Nothing transmits; the radio is pretend.
 - `python3 tests/d750ctrl-test.py`: the rig screen, under a pseudo terminal. It presses the
   keys, and checks what the simulated radio ended up with and what the screen showed: each view at
   two window sizes, the cursor, the questions, `--check`, a `[keys]` section, a window that is too
-  small, and every way out. It also counts how often the screen reads the radio. It starts its own
+  small, with unkey and lock in help and the memory list there, and every way out, Ctrl+backslash
+  among them, with an unkey typed in the same write as Ctrl+C or Ctrl+backslash. It also checks
+  a second paste whose start mark is cut in the wait after a paste, and the message when the lock
+  goes away by another program's unlock or a daemon restart. It also counts how often the screen
+  reads the radio. It starts its own
   test bed, so stop the one you started for `tests/tests.sh` first, as the GitHub workflow does. It
   sets `D750_XARA_PORT` to a port of its own and puts stubs for the chat, SSTV and RTTY programs first
   on the path. It never answers a send question with `y`.
@@ -111,7 +139,9 @@ D750_CMD_PORT=4543 D750_PTT_PORT=4542 d750 status
 `D750_PORT`, and answers the Kenwood commands the way the real radio did when its answers were
 captured, and the way the community's TH-D74 command list says for the rest. Commands it does not
 know get `?`. It starts with band A on 147.040 MHz, band B on 144.390 MHz, KISS on band B, and two
-memory channels. The option `--busy-flicker` makes the busy flags change now and then. The `d750`
+memory channels. The option `--busy-flicker` makes the busy flags change now and then. The option
+`--record FILE` writes every line it receives to FILE, one line each, so a test can see what reached
+the radio; `tests/test-env.sh` uses it, with the file `sim-lines.txt` in its log folder. The `d750`
 verbs, the rig screen and the Hamlib port work against it, which is also how the sample output in
 these docs was captured. See [Try it without a radio](try-without-a-radio.md).
 
@@ -124,6 +154,7 @@ runs:
 
 - `tests/tests.sh`, then it stops the test bed;
 - `tests/output-rules-test.py`, on a fresh test bed that it also stops afterwards;
+- `tests/d750d-test.py`;
 - `tests/keymap-test.py` and `tests/screen-model-test.py`;
 - `tests/d750ctrl-test.py`;
 - `tests/d750ctrl-tmux-test.py`, with tmux installed for it;
@@ -143,7 +174,8 @@ and the `.venv`.
 - The SSTV and RTTY tests use `--no-key` and a virtual sound device.
 - The APRS tests open no port and transmit nothing.
 - The test daemon listens on ports 4542 and 4543, so it does not touch a real d750d on 4532 and
-  4533.
+  4533. `tests/d750d-test.py` picks two other free ports, and checks before its daemon starts that
+  neither is one of those, and that its serial device is the simulator's.
 
 ## Settings
 

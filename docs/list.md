@@ -158,6 +158,10 @@ row's line in the message row. Examples from runs:
 It also says refusals and results:
 
 - `PTT locked.`, after the lock key or Enter on the PTT row.
+- `Locked. The radio did not confirm RX.`, when the lock holds but the radio did not say it is
+  receiving.
+- `PTT is no longer locked.`, once, when the lock went away without this screen's unlock: another
+  program unlocked, or d750d started again.
 - `VOX is read only here. Try: d750 vox`
 - `Enter does what this row says.`, after Space on an action row.
 - `Still the list. y goes to the face.`, when you answer the view question with anything but `y`.

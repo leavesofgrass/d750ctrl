@@ -16,7 +16,11 @@ keys](#checking-your-keys).
 
 These never change, and they mean the same in every view and every mode.
 
-- Ctrl+C quits this screen.
+- Ctrl+C quits this screen. Ctrl+backslash does the same, and both put the terminal back as it was.
+  Keys typed just before them are kept: the keys the screen has already read act as usual, and of
+  the keys still waiting, a key of unkey unkeys and a key of lock locks when PTT is not locked. Every
+  other waiting key is dropped. While a tool has this terminal, with `--no-tmux`, Ctrl+C belongs to
+  the tool.
 - Ctrl+L draws the screen again.
 - A digit or the period starts typing a frequency for the active band.
 - While you type: Enter applies, Escape cancels, and Backspace deletes.
@@ -37,7 +41,9 @@ The keys of `unkey` and `lock` are special, because they stop transmitting:
 - They act in help, in the memory browser and at every question. At a question they also answer
   no, and the question ends.
 - They do not act while you type a line. There they are just characters.
-- They act when the window is too small to show a view, and `lock` there only locks.
+- They act when the window is too small to show a view, in every mode but typing, as they do in a
+  window big enough. The one difference: a question cannot show there, so `lock` while PTT is locked
+  asks nothing in the main mode and says `Still locked.`
 - Keys typed ahead of a question, or right after Enter ends a typing line, are thrown away. The keys
   of `unkey` and `lock` are the exception: they still act.
 

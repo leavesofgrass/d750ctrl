@@ -161,6 +161,10 @@ Every other change is told in both modes, because its row is not at the cursor:
 - `Band A power mid.`
 - `Step 12.5 kHz.`
 - `PTT locked.`
+- `Locked. The radio did not confirm RX.`, when the lock holds but the radio did not say it is
+  receiving.
+- `PTT is no longer locked.`, once, when the lock went away without this screen's unlock: another
+  program unlocked, or d750d started again.
 - `TNC off on band B.`
 - `Radio clock set.`
 - `Unkey sent.`

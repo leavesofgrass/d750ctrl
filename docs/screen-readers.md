@@ -93,8 +93,14 @@ for how to pick one and [d750ctrl](d750ctrl.md) for the rest.
   stalls inside a paste for more than a second or two, which makes the rest of the paste keys. A
   terminal that sends no marks pastes as keys, and there a paste that pauses for half a second or
   more and then has a small y could still answer a send question.
-- **The keys of unkey and lock** act in help, in the memory list and at every question. A frame or a
-  send is refused while PTT is locked or its state is not known.
+- **The keys of unkey and lock** act in help, in the memory list and at every question, and in a
+  window too small to show anything. A frame or a send is refused while PTT is locked or its state is
+  not known.
+- **The lock is told in words.** "Locked. The radio did not confirm RX." when the lock holds but the
+  radio did not say it is receiving. "PTT is no longer locked." once, when the lock went away without
+  this screen's unlock. Both are said in both announce modes.
+- **Ctrl+C and Ctrl+backslash** quit and put the terminal back. An unkey or lock key typed just
+  ahead of them still acts.
 - **A window that is too small** shows one row that says so. The list needs 40 by 8, the compact view
   40 by 6, and the face 40 by 10 stacked or 80 by 12 wide.
 - **`--ascii` now means `--digits plain`**: no large digits.

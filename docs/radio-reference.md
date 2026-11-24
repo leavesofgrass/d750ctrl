@@ -184,8 +184,12 @@ d750 raw TX
 
 ```text
 ID TM-D750
-ERR TX is not allowed on this port; keying goes through 4532
+ERR TX is not allowed on this port
 ```
+
+Keying goes through port 4532. d750d judges a line on port 4533 by its first two characters, so `TX0`
+is refused as `TX` is, and it refuses a line with any character but letters, digits, spaces and
+`, . - / +`. See [d750d](d750d.md#port-4533-the-plain-command-port).
 
 ## The commands
 
@@ -316,6 +320,9 @@ commands.
   APRS mode with the automatic or SmartBeaconing methods, the radio beacons by itself.
 - Reported by another project, not verified here: `TN 2,0` is KISS on band A and `TN 2,1` is KISS
   on band B, as the user manual says.
+- While PTT is locked, d750d refuses `TN` with a mode other than 0, `PT` with any value, and `VX`
+  with any value but 0, since each can let the radio send by itself. The reads still pass, and so
+  do `TN 0,1` and `VX 0`. See [What lock covers](d750d.md#what-lock-covers-and-what-it-does-not).
 
 ### GPS
 

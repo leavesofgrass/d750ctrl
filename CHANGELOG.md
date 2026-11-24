@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+- Changed: d750d's command port refuses a whole line that holds anything but letters, digits, the
+  space and `, . - / +` (a carriage return inside a line, a semicolon and every control character
+  among them), a line that starts with a digit, and a line over 512 characters, each with its own ERR
+  words. It judges a command by its first two characters, whatever follows, so `TX0` is refused as
+  `TX` is. Its own words act only alone and in small letters. The refusal of keying now reads
+  `ERR TX is not allowed on this port`. The rigctl port refuses a line with a control character or
+  over 512 characters, takes the PTT values 0 to 3 only, and refuses a frequency or a level that is
+  not a finite number.
+- Changed: while PTT is locked, d750d also refuses turning VOX on, putting the TNC into APRS or KISS
+  mode, and any change to the beacon method. So while locked, d750-aprs cannot put the TNC back in
+  KISS mode after the radio restarts, and `d750 tnc kiss` and `d750 fixup` are refused too. The lock
+  does not stop KISS frames sent through a TNC already in KISS mode.
+- Changed: `lock` always sends the unkey and checks the answer. When the radio does not confirm, it
+  answers "OK locked; the radio did not say it is receiving", the lock still holds, and the rig screen
+  says "Locked. The radio did not confirm RX." An unkey counts only when the radio confirms it, so
+  the watchdog tries again.
+- Fixed: `d750 -n lock`, `-n unlock`, `-n ptt off` and `-n raw` sent their command. They now send
+  nothing. `d750 lock` and `d750 unlock` exit 1 on an ERR answer.
+- Fixed in the rig screen: keys typed just before Ctrl+C or Ctrl+backslash are kept and acted on,
+  so an unkey typed just ahead of Ctrl+C still unkeys. Ctrl+backslash puts the terminal back. Unkey
+  and lock act at any window size. The message row says "PTT is no longer locked." when the lock goes
+  away without this screen's unlock. A second paste whose start mark the link cuts, right after a
+  paste, is no longer keys. A daemon word typed at the raw line goes in small letters.
+- New test: `tests/d750d-test.py`, the daemon's line rules through its own ports against the
+  simulator, run by the workflow. The simulator can record every line it receives (`--record`), and
+  `tests/tests.sh` uses that to check refused lines reach it not at all.
+
 - The rig screen has three views: the face (both bands, wide at 80 columns or more, stacked under that), a
   list with one control on each row, built for speech and Braille, and a compact view of three rows. Start
   in one with `--view NAME` or `view = NAME`; capital V goes to the next. Leaving the list asks first. A

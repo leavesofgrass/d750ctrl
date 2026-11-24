@@ -67,7 +67,7 @@ not encyclopedia entries.
 ## P
 
 - PTT: Push to talk: the key line that makes the radio transmit. d750d owns it, takes it on port
-  4532, and unkeys after 30 seconds, on a lost client, and on serial errors.
+  4532, and unkeys after 30 seconds, when a client leaves, on serial errors, and on lock.
 
 ## R
 

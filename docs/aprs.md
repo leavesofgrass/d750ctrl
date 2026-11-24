@@ -277,6 +277,14 @@ Then, with `restart_check = on`, it sends one check beacon. An iGate carrying th
 news. None carrying it is usual at this station, and is one line in the log, never an alarm, a reset
 or a power cycle.
 
+While PTT is locked with `d750 lock`, d750d refuses to put the TNC into KISS mode. The reset then
+turns the TNC off, cannot turn it back on, and the log says the radio did not confirm it after the
+second try. The TNC stays off, and nothing is heard or sent, until you run `d750 unlock` and then
+`d750 tnc kiss B`. The other way round, the lock does not stop KISS frames: d750-aprs sends them to
+the TNC on its own port, not through d750d, so while the TNC is in KISS mode the lock does not hold
+back beacons, messages, acknowledgements or frames from KISS programs. `d750-aprs transmit off`
+does. See [What lock covers](d750d.md#what-lock-covers-and-what-it-does-not).
+
 d750-aprs also sends the KISS settings (TX delay, persistence and slot time) every time it connects
 to the TNC. After the radio restarts by itself, its TNC may take commands but send nothing until
 these are set again. On November 11, 2026, a power cycle did not clear that; sending the settings

@@ -73,6 +73,25 @@ These parts are new or changed, and have not yet had time on the air:
 The firmware line in `d750 doctor` is new too. It has been run once on the author's radio, where it
 printed firmware 1.03.
 
+## Safety fixes, proven against the pretend radio only
+
+These fixes to the daemon, the verbs and the rig screen are proven by the automated tests, and
+have not yet been run against the TM-D750:
+
+- d750d's rules for what a line may hold on each port, and the commands the lock refuses besides
+  keying. `tests/d750d-test.py` checks that each refused line reaches the pretend radio not at all,
+  and that what the programs here send still passes. A program from elsewhere that sends a line
+  these rules refuse has not been tried.
+- `lock` sending the unkey and checking the answer, and the answer when the radio does not confirm.
+  The pretend radio was made to answer `N` for that. How the real radio answers when it cannot
+  unkey is not known.
+- The `-n` dry runs of `lock`, `unlock`, `ptt off` and `raw`.
+- In the rig screen: keys typed just before Ctrl+C or Ctrl+backslash, Ctrl+backslash putting the
+  terminal back, unkey and lock in a window too small, "PTT is no longer locked.", a second paste
+  whose start mark the link cuts, and a daemon word at the raw line. These are checked in a pseudo
+  terminal and with no terminal, not with a person at a real terminal, a screen reader or a Braille
+  display.
+
 ## The rig screen's three views: not tried by a person yet
 
 The rig screen was rebuilt with three views (list, face and compact), remappable keys, themes and

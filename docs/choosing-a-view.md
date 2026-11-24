@@ -73,9 +73,12 @@ shrank is cancelled and says its "no" words.
 
 While the window is too small to show anything, only these keys act:
 
-- Ctrl+C quits, and Ctrl+L draws again.
-- Quit and unkey, with the keys in force.
-- Lock, but only when PTT is not locked yet. It never asks to unlock here.
+- Ctrl+C and Ctrl+backslash quit, and Ctrl+L draws again.
+- Unkey and lock, with the keys in force, in help, in the memory list and at a question as well as
+  in the main screen. They act as in a window big enough, except that lock while PTT is locked
+  never asks to unlock here: in the main screen it says `Still locked.` They do not act while you
+  type a line.
+- Quit, with the keys in force, in the main screen only.
 
 Every other key is ignored until the window is large enough. Nothing is lost: make the window
 larger and the screen is back as it was.

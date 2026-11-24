@@ -157,6 +157,9 @@ never taken as keys:
   was dropped.` The wait never lasts more than five seconds. So text that follows a paste's end, even
   inside the same paste, is never keys. If Enter right after a paste did nothing, wait half a second
   and press it again.
+- A second paste right after the first, in that wait, is not keys either, even when the link cuts
+  its start mark in two. When the rest of the mark comes within a second, a new paste starts. When
+  it does not, the part that came in the wait was dropped there.
 
 Pasting into a typing line is the supported way to enter long text, such as a line of RTTY text or a
 picture path.
@@ -226,7 +229,16 @@ handed to xara.` If xara does not answer it says `Xara does not answer on port 8
   It also refuses a raw line that turns VOX on or changes the TNC. Examples from runs:
   `Refused: TX can key or move the radio.`, `Refused: VOX lets the radio key itself.`,
   `Refused. The t key changes the TNC.`, `Refused. Capital L locks and unlocks.` and
-  `Refused: quit is the daemon's own word.` A raw `VX 0`, which turns VOX off, is sent.
+  `Refused: quit is the daemon's own word.` A raw `VX 0`, which turns VOX off, is sent. A daemon
+  word the screen sends, such as `STATE` typed at the raw line, goes in small letters, as `state`,
+  since d750d takes its words only in small letters.
+- Ctrl+C and Ctrl+backslash put the terminal back, and keys typed just before them are kept: an
+  unkey typed just ahead of Ctrl+C still unkeys. See [The fixed keys](keys.md#the-fixed-keys).
+- The keys of unkey and lock act when the window is too small, in help, in the memory list and at
+  a question too.
+- The message row says `PTT is no longer locked.` when the lock goes away without this screen's
+  unlock, and `Locked. The radio did not confirm RX.` when the lock holds but the radio did not
+  confirm the unkey.
 - Pastes are marked by the terminal and never taken as keys. See [Pasting](#pasting).
 - A question takes no answer in its first half second, and keys typed ahead are thrown away. The
   keys of unkey and lock still act, in help, in the memory browser and at questions.
@@ -370,8 +382,20 @@ the busy flags only. A change you make from the screen is read back at once. Det
 
 - **You see:** the message `Window too small. Need 40 by 8.` or `Window too small. Need 40 by 6.`
   - **Why:** the window is smaller than the smallest view you asked for.
-  - **What to do:** make the window larger. Ctrl+C, quit, unkey and Ctrl+L still work meanwhile.
-    See [Choosing a view](choosing-a-view.md).
+  - **What to do:** make the window larger. Ctrl+C, Ctrl+backslash and Ctrl+L still work
+    meanwhile, and so do unkey and lock, in every mode but typing, and quit in the main screen. See
+    [Choosing a view](choosing-a-view.md).
+
+- **You see:** `Locked. The radio did not confirm RX.`
+  - **Why:** you locked, and the radio did not answer the unkey that goes with the lock. The lock
+    holds.
+  - **What to do:** look at the radio, and run `d750 state` and `d750 log`. See
+    [Troubleshooting](troubleshooting.md#d750-lock-says-the-radio-did-not-say-it-is-receiving).
+
+- **You see:** `PTT is no longer locked.`
+  - **Why:** the lock went away without this screen's unlock: another program unlocked, or d750d
+    started again. It is said once.
+  - **What to do:** press the lock key, capital `L` by default, if you still want the lock.
 
 - **You see:** `Settings skipped. Try d750ctrl --check`.
   - **Why:** a setting or a key line has a value the screen does not know.
