@@ -1,8 +1,9 @@
 """fakedaemon: a pretend d750d inside the test process, and a carrier for the model's things to do.
 
-FakeDaemon answers the command port's lines as d750d does: the state line, lock, unlock,
-reconnect, the refused words, and the radio's answers from the Sim class of
-tests/d750-sim.py, loaded by its path. Its PTT port takes T 0 and answers RPRT 0.
+FakeDaemon answers the command port's lines as d750d does, by d750d's rules for what a line
+may hold (copied in judge, and checked against the real daemon by tests/d750d-test.py): the
+state line, lock, unlock, reconnect, the refusals, and the radio's answers from the Sim class
+of tests/d750-sim.py, loaded by its path. Its PTT port takes T 0 and answers RPRT 0.
 
 Carrier carries out each thing to do the model gives, against a FakeDaemon, and records
 every one. Nothing here opens a socket, a port or a terminal, and nothing transmits:
@@ -32,7 +33,41 @@ _spec.loader.exec_module(d750_sim)
 
 DAEMON_WORDS = ("state", "lock", "unlock", "reconnect", "quit")
 UNSAFE = {"TX", "RX", "UP", "DW", "SR", "PS", "0M", "0G", "BE"}
+ARMS = ("VX", "TN", "PT")  # refused while locked: they arm the radio to send by itself
+LINE_LIMIT = 512
+CMD_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 ,.-/+")
 CLOCK_TIME = "261123120000"
+
+
+def judge(line, locked):
+    """d750d's rules for one command port line, copied: ("refuse", why), ("word", w), ("blank", ""),
+    or ("radio", the command). The line end, a newline with one carriage return before it, is taken off first."""
+    if line.endswith("\n"):
+        line = line[:-1]
+        if line.endswith("\r"):
+            line = line[:-1]
+    if len(line) > LINE_LIMIT:
+        return "refuse", f"the line is longer than {LINE_LIMIT} characters"
+    if any(c not in CMD_CHARS for c in line):
+        return "refuse", "only plain letters, digits, spaces and , . - / + are allowed"
+    if line in DAEMON_WORDS:
+        return "word", line
+    line = line.strip(" ")
+    if not line:
+        return "blank", ""
+    if line[0].isdigit():
+        return "refuse", "a line may not start with a digit"
+    if line.split(" ")[0].lower() in DAEMON_WORDS:
+        return "refuse", "say the word alone, in small letters"
+    cmd = line[:2].upper()
+    if cmd in UNSAFE:
+        return "refuse", f"{cmd} is not allowed on this port"
+    if locked and cmd in ARMS:
+        value = line[2:].strip(" ")
+        if (cmd == "VX" and value not in ("", "0")) or (cmd == "TN" and value and value.split(",")[0].strip(" ") != "0") \
+                or (cmd == "PT" and value):
+            return "refuse", f"{cmd} is refused while PTT is locked"
+    return "radio", line
 
 
 class FakeDaemon:
@@ -61,26 +96,26 @@ class FakeDaemon:
         self.lines.append(line)
         if not self.answering:
             return "ERR [Errno 111] Connection refused"
-        line = line.strip()
-        if not line:
+        what, line = judge(line, self.locked)
+        if what == "blank":
             return ""
-        word = line.split()[0]
-        if word.lower() in DAEMON_WORDS:
-            w = word.lower()
-            if w == "state":
+        if what == "refuse":
+            return f"ERR {line}"
+        if what == "word":
+            if line == "state":
                 return self.state()
-            if w == "lock":
+            if line == "lock":
                 self.locked = True
+                if not self.port_open:  # d750d sends RX and checks it; no radio, no answer, the lock holds
+                    return "OK locked; the radio did not say it is receiving"
                 self.keyed = False
                 return "OK locked, PTT refused until unlock"
-            if w == "unlock":
+            if line == "unlock":
                 self.locked = False
                 return "OK unlocked"
-            if w == "reconnect":
+            if line == "reconnect":
                 return "OK port reopened"
             return "ERR closed"
-        if word.upper() in UNSAFE:
-            return f"ERR {word} is not allowed on this port; keying goes through 4532"
         if not self.port_open:
             return "ERR radio port not available: no such device"
         answer = self.sim.answer(line)

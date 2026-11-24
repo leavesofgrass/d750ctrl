@@ -1,10 +1,12 @@
 #!/bin/sh
 # test-env.sh: start the radio simulator and a second d750d against it, on ports 4542 (PTT) and 4543 (commands),
 # logging under ~/.local/share/d750ctrl/log/test. Prints the device path and keeps both running until killed.
+# Every line the simulator receives goes to sim-lines.txt there, one line each, for tests.sh to read.
 # Use: D750_CMD_PORT=4543 d750 status     Written Saturday, November 7, 2026.
 set -u
 here=$(dirname "$(readlink -f "$0")"); top=$(dirname "$here"); T="$HOME/.local/share/d750ctrl/log/test"; mkdir -p "$T"
-: > "$T/sim.out"; python3 -I -u "$here/d750-sim.py" --busy-flicker > "$T/sim.out" 2>&1 &
+: > "$T/sim.out"; : > "$T/sim-lines.txt"
+python3 -I -u "$here/d750-sim.py" --busy-flicker --record "$T/sim-lines.txt" > "$T/sim.out" 2>&1 &
 simpid=$!
 pty=""
 for _ in $(seq 1 40); do pty=$(head -1 "$T/sim.out" 2>/dev/null); case "$pty" in /dev/pts/*) break;; esac; pty=""; sleep 0.25; done

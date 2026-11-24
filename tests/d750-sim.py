@@ -5,6 +5,8 @@ Prints the device path to use as D750_PORT, then answers Kenwood commands the wa
 did on November 7 (ID, FV, TY, BC p1,p2, FQ, MD, SQ, BY, TN, TX, RX) and the way the TH-D74 list
 says for the rest (PC, VM, MR, ME, FO, GP, DL, VX, VD, VG, RT, MS, CS, AS, SM, BL, AE).
 Unknown commands get "?". GP x,1 starts a stream of GPS sentences, like menu 403 On does.
+Every line it receives is recorded, as bytes, in Sim.received, and with --record FILE also one
+line each in FILE (Python's repr of the bytes), so a test can see what reached the radio.
 Options: --busy-flicker makes BY toggle now and then. Written Saturday, November 7, 2026."""
 import os, pty, random, select, sys, time
 
@@ -28,6 +30,8 @@ class Sim:
         self.busy = {0: 0, 1: 0}
         self.flicker = "--busy-flicker" in sys.argv
         self.last_gps = 0.0
+        self.received = []  # every line received, as bytes, line end taken off
+        self.answer_n = set()  # commands a test wants answered N, as a radio that does not do them
 
     def fo(self, b):
         return (f"FO {b},{self.freq[b]:010d},{self.offset[b]:010d},2,2,{self.mode[b]},0,0,0,0,0,0,0,0,08,08,000,0,CQCQCQ,0,00")
@@ -36,6 +40,8 @@ class Sim:
         parts = line.strip().split(" ", 1)
         cmd = parts[0].upper(); arg = parts[1] if len(parts) > 1 else ""
         a = arg.split(",") if arg else []
+        if cmd in self.answer_n:
+            return "N"
         def band():
             return int(a[0]) if a and a[0] in ("0", "1") else None
         try:
@@ -120,13 +126,12 @@ class Sim:
             return "N"
         return "?"
 
-def main():
-    master, slave = pty.openpty()
-    path = os.ttyname(slave)
-    print(path, flush=True)
-    sim = Sim(); buf = b""
-    while True:
-        r, _, _ = select.select([master], [], [], 0.5)
+def serve(master, sim, record=None, stop=None):
+    """Answer on the pseudo terminal's master side until it closes, or until stop (an Event) is set.
+    Each line received goes to sim.received first, and to record (an open file) when there is one."""
+    buf = b""
+    while stop is None or not stop.is_set():
+        r, _, _ = select.select([master], [], [], 0.2)
         if r:
             try:
                 data = os.read(master, 256)
@@ -135,13 +140,31 @@ def main():
             buf += data
             while b"\r" in buf or b"\n" in buf:
                 cut = min(i for i in (buf.find(b"\r"), buf.find(b"\n")) if i >= 0)
-                line, buf = buf[:cut].decode(errors="replace"), buf[cut + 1:]
+                raw, buf = buf[:cut], buf[cut + 1:]
+                sim.received.append(raw)
+                if record is not None:
+                    record.write(repr(raw) + "\n")
+                    record.flush()
+                line = raw.decode(errors="replace")
                 if line.strip():
                     time.sleep(0.02)
                     os.write(master, (sim.answer(line) + "\r").encode())
         if sim.gp[1] == 1 and time.time() - sim.last_gps > 1.0:
             sim.last_gps = time.time()
             os.write(master, b"$GPGGA,000000.000,,,,,0,0,,,M,,M,,*43\r\n")
+
+def main():
+    record = None
+    if "--record" in sys.argv:
+        i = sys.argv.index("--record")
+        if i + 1 >= len(sys.argv):
+            print("usage: d750-sim.py [--busy-flicker] [--record FILE]", file=sys.stderr)
+            sys.exit(2)
+        record = open(sys.argv[i + 1], "a", encoding="ascii")
+    master, slave = pty.openpty()
+    path = os.ttyname(slave)
+    print(path, flush=True)
+    serve(master, Sim(), record)
 
 if __name__ == "__main__":
     main()

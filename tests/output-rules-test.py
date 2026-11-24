@@ -308,7 +308,9 @@ def main():
         check(["freq", "A", "27.000"], want_rc=(1,), keep=["FQ 0"])
         check(["squelch", "B", "12"], want_rc=(2,), keep=["SQ 1"])
         check(["nonsense"], want_rc=(2,))
-        # The daemon's own words, and unkeying.
+        # The daemon's own words, and unkeying: their dry runs first, which send nothing.
+        for args in (["-n", "lock"], ["-n", "unlock"], ["-n", "ptt", "off"], ["-n", "raw", "ID"]):
+            check(args, keep=["BC"])
         locked = True
         check(["lock"])
         check(["unlock"])

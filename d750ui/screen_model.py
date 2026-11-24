@@ -46,6 +46,10 @@ TO_COMPACT = "View: compact. Letters change the radio."
 STILL_THE_LIST = "Still the list. y goes to the face."
 UNLOCK_QUESTION = "Unlock PTT? y or n"
 STILL_LOCKED = "Still locked."
+LOCK_GONE = "PTT is no longer locked."  # the lock went away without this screen's unlock
+LOCKED_NO_RX = "Locked. The radio did not confirm RX."  # lock held, the radio did not say it is receiving
+NO_RX_WORDS = "did not say it is receiving"  # in the daemon's answer to lock when the radio did not confirm
+DAEMON_WORDS = ("state", "lock", "unlock", "reconnect", "quit")  # the daemon takes each only alone, in small letters
 CLOCK_QUESTION = "Set the radio clock from here? y or n"
 FRAME_QUESTION = "Frame: c CQ, b beacon, n no"
 QUIT_QUESTION = "Close the tool windows too? y or n"
@@ -485,6 +489,7 @@ class ScreenModel:
         # keeps its other words but not its lock words.
         self._lock_answers = 0  # lock and unlock answers taken so far
         self._ask_locks = {}  # id of an Ask out, to (the Ask, lock answers when it went out)
+        self._unlocking = 0  # this screen's unlocks out, not yet answered
 
     # ----------------------------------------------------------------- what is held
 
@@ -772,7 +777,12 @@ class ScreenModel:
                 self.port_open = answer.startswith("port open")
                 self.keyed = "; keyed" in answer
                 if lock_words:
-                    self.locked = "; locked" in answer
+                    locked = "; locked" in answer
+                    if self.locked is True and not locked and not self._unlocking:
+                        # The lock went away without this screen's unlock: the daemon started
+                        # again, or another program unlocked. Said once, in both announce modes.
+                        self._tell(LOCK_GONE)
+                    self.locked = locked
                 return True
             return False
         if cmd == "BY":
@@ -898,16 +908,24 @@ class ScreenModel:
         return []
 
     def _key_too_small(self, name):
-        """Nothing shows: in main mode only quit, unkey, and lock when the daemon is not locked act."""
-        if self.mode != MAIN:
+        """Nothing shows. The keys of unkey and lock act as in a window big enough for a view, in
+        every mode but typing; quit acts in main mode only; nothing else acts, so a letter typed as
+        part of a value never acts. One difference: a question cannot be shown here, so lock while
+        locked in main mode opens none, and says what a question cancelled by the size says."""
+        if self.mode == TYPING:
             return []
         action = self.keymap.action(self.family, name)
-        if action == "quit":
-            return [Quit()]
-        if action == "unkey":
-            return [Unkey()]
-        if action == "lock" and not self.locked:
+        if action in ("unkey", "lock"):
+            if self.mode != MAIN:
+                return self._unkey_or_lock_anywhere(action)
+            if action == "unkey":
+                return [Unkey()]
+            if self.locked:
+                self._tell(NO_WORDS["unlock"])
+                return []
             return self._send_set("lock", "lock")
+        if action == "quit" and self.mode == MAIN:
+            return [Quit()]
         return []
 
     def _key_main(self, name):
@@ -1337,6 +1355,7 @@ class ScreenModel:
             return []
         # Only the small letter y comes here.
         if q == "unlock":
+            self._unlocking += 1  # until its answer comes, an unlocked state is this screen's own
             return self._send_set("unlock", "lock")
         if q == "tnc":
             mode, band = self._send.get("tnc", (None, None))
@@ -1812,6 +1831,9 @@ class ScreenModel:
             said = f"Refused: {word} is the daemon's own word."
             self._tell(said if len(said) <= lines.CELLS else f"Refused: {word} is a daemon word.")
             return []
+        if stripped.lower() in DAEMON_WORDS:
+            # The daemon takes its words only alone and in small letters: STATE goes as state.
+            return self._send_set(stripped.lower(), "raw")
         return self._send_set(text, "raw")
 
     # ----------------------------------------------------------------- results
@@ -1823,6 +1845,8 @@ class ScreenModel:
     def finished(self, todo, result=None, error=None, at=""):
         """A thing to do was carried out: its result, or the error it raised. Gives more to do."""
         origin = self._origins.pop(id(todo), None)
+        if isinstance(todo, Set) and str(todo.line).strip() == "unlock" and self._unlocking:
+            self._unlocking -= 1  # answered, or failed: no longer out
         if isinstance(todo, (Ask, MemoryRead)) and (self._out is todo or self._out == todo):
             self._out = None
         if isinstance(todo, Ask) and error is not None:
@@ -1902,7 +1926,12 @@ class ScreenModel:
         if where is None:
             where = "lock" if cmd in ("LOCK", "UNLOCK") else self._origin()
         if where == "lock":
-            if answer.startswith("OK"):
+            if cmd == "LOCK" and NO_RX_WORDS in answer:
+                # The lock holds, but the radio did not say it is receiving: locked, and said.
+                self.locked = True
+                self._lock_answers += 1
+                self._tell(LOCKED_NO_RX)
+            elif answer.startswith("OK"):
                 self.locked = cmd == "LOCK"
                 self._lock_answers += 1
                 self._tell("PTT locked." if self.locked else "PTT unlocked.")

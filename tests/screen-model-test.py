@@ -1438,6 +1438,137 @@ class Pastes(Frames):
             self.assertEqual((m.mode, m.question, m.asked, m.typed), state, keys)
 
 
+class LockAndSize(Frames):
+    """Unkey and lock at any size, a lock lost elsewhere, the lock's answers, the raw line's daemon words."""
+
+    def test_unkey_and_lock_act_at_any_size_as_in_a_big_window(self):
+        for view in sm.VIEWS:
+            for keys, mode in (((), sm.MAIN), (("?",), sm.HELP), (("C",), sm.MEMORY)):
+                for locked in (False, True):
+                    for key in ("U", "L"):
+                        big, small = sized(view), sized(view)
+                        for r in (big, small):
+                            r.press(*keys)
+                            r.daemon.locked = r.model.locked = locked
+                        if big.model.mode != mode:
+                            continue
+                        small.model.size(20, 5)
+                        self.assertIsNone(sm.shows(view, 20, 5))
+                        small.model.message = "(marker)"
+                        got_big, got_small = big.model.key(key), small.model.key(key)
+                        case = (view, keys, locked, key)
+                        if mode == sm.MAIN and key == "L" and locked:
+                            # The unlock question cannot be shown: none opens, and it says so.
+                            self.assertEqual(big.model.asked, "unlock", case)
+                            self.assertEqual((got_small, small.model.mode, small.model.question), ([], sm.MAIN, 0), case)
+                            self.assertEqual(small.model.message, sm.STILL_LOCKED, case)
+                            continue
+                        self.assertEqual(got_small, got_big, case)
+                        self.assertEqual(small.model.mode, big.model.mode, case)
+                        want = [sm.Unkey()] if key == "U" else ([] if locked else [sm.Set("lock")])
+                        self.assertEqual(got_small, want, case)
+        # The probe's cases: help and the memory list at 20 by 5, U then L, carried out.
+        for keys in (("?",), ("C",)):
+            r = sized("face")
+            r.press(*keys)
+            r.model.size(20, 5)
+            self.assertEqual(r.press("U")[:1], [sm.Unkey()], keys)  # then the state read it asks for
+            self.assertEqual(sets(r.press("L")), ["lock"], keys)
+            self.assertTrue(r.daemon.locked and r.model.locked, keys)
+            self.assertEqual(r.press("L"), [], keys)
+            self.assertEqual(r.press("Q"), [], ("quit acts in main mode only", keys))
+
+    def test_typing_at_any_size_takes_no_unkey_or_lock(self):
+        r = sized("face")
+        r.press("1")
+        r.model.size(20, 5)
+        for key in ("U", "L", "u", "Q"):
+            self.assertEqual(r.press(key), [], key)
+        self.assertEqual(r.model.mode, sm.TYPING)
+
+    def lock_lost(self, how, announce):
+        r = sized("face", announce=announce)
+        r.tick(1.0)
+        self.assertEqual(sets(r.press("L")), ["lock"])
+        r.tick(3.0)
+        self.assertEqual(r.model.status(), "d750ctrl. Receiving. PTT locked.")
+        r.model.message = "(marker)"
+        if how == "another client":
+            r.daemon.command("unlock")
+            self.assertFalse(r.daemon.locked)
+        else:
+            r.daemon = r.carrier.daemon = type(r.daemon)()  # the daemon starts again: its lock is gone
+        r.tick(8.0)
+        self.assertEqual(r.model.status(), "d750ctrl. Receiving. Unlocked.", (how, announce))
+        self.assertEqual(r.model.message, sm.LOCK_GONE, (how, announce))
+        r.model.message = "(marker)"
+        r.tick(8.0)
+        self.assertEqual(r.model.message, "(marker)", ("said once", how, announce))
+        self.assertTrue(keeps_40(sm.LOCK_GONE))
+
+    def test_a_lock_lost_without_this_screens_unlock_is_said_once(self):
+        for how in ("another client", "a restart"):
+            for announce in sm.ANNOUNCE:
+                self.lock_lost(how, announce)
+
+    def test_this_screens_own_unlock_is_not_a_lock_lost(self):
+        for announce in sm.ANNOUNCE:
+            r = sized("face", announce=announce)
+            r.tick(1.0)
+            r.press("L")
+            r.tick(3.0)
+            r.press("L", "y")
+            self.assertEqual(r.model.message, "PTT unlocked.")
+            r.tick(8.0)
+            self.assertEqual(r.model.message, "PTT unlocked.", announce)
+        # A state read that comes back unlocked while this screen's unlock is still out.
+        r = sized("face")
+        r.tick(1.0)
+        r.press("L")
+        r.tick(3.0)
+        m = r.model
+        m.key("L")
+        unlock = [t for t in m.key("y") if isinstance(t, sm.Set)][0]
+        self.assertEqual(unlock.line, "unlock")
+        r.daemon.locked = False
+        m.message = "(marker)"
+        state = sm.Ask(("state",), "state")
+        m.finished(state, (r.daemon.state(),), None, "")
+        self.assertFalse(m.locked)
+        self.assertEqual(m.message, "(marker)", "this screen's own unlock was said as a lock lost")
+        m.finished(unlock, "OK unlocked", None, "")
+        self.assertEqual(m.message, "PTT unlocked.")
+
+    def test_a_lock_the_radio_did_not_confirm_is_locked_and_said(self):
+        for answer in ("OK locked; the radio did not say it is receiving", "ERR the radio did not say it is receiving"):
+            r = sized("face")
+            r.tick(1.0)
+            self.assertFalse(r.model.locked)
+            r.model.finished(sm.Set("lock"), answer, None, "")
+            self.assertTrue(r.model.locked, answer)
+            self.assertEqual(r.model.status(), "d750ctrl. Receiving. PTT locked.", answer)
+            self.assertEqual(r.model.message, sm.LOCKED_NO_RX, answer)
+            self.assertEqual(r.model.key("c"), [], answer)
+            self.assertEqual(r.model.message, sm.LOCKED_NOTHING_SENT, answer)
+        self.assertTrue(keeps_40(sm.LOCKED_NO_RX))
+        r = sized("face")
+        r.tick(1.0)
+        r.model.finished(sm.Set("lock"), "OK locked, PTT refused until unlock", None, "")
+        self.assertTrue(r.model.locked)
+        self.assertEqual(r.model.message, "PTT locked.")
+
+    def test_a_daemon_word_at_the_raw_line_goes_in_small_letters(self):
+        for typed in ("state", "STATE", "State", "sTaTe"):
+            r = sized("face")
+            r.tick(1.0)
+            r.press(":")
+            r.type(typed)
+            todos = r.press("enter")
+            self.assertEqual(sets(todos), ["state"], typed)
+            self.assertFalse(r.model.no_daemon, typed)
+            self.assertNotEqual(r.model.status(), "d750ctrl. No daemon.", typed)
+
+
 def why(trace):
     """A failure in one line: the test file's line number and the error's first words."""
     found = re.findall(r'File "[^"]*screen-model-test\.py", line (\d+)', trace)

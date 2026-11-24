@@ -13,9 +13,13 @@ Keys are read in bursts: one key, then every key ready with no waiting. PasteGua
 the marks of a bracketed paste in them, so that a paste is never keys: it goes to the
 model as text, which keeps it in a typing line and drops it everywhere else.
 
-Every way out puts the terminal back as it was: quit, Ctrl+C, SIGTERM, SIGHUP and a bug,
-which then prints one line starting "Fail:" and exits 1. The tmux workspace is ended
-last, after the terminal is back, since ending it ends this terminal too.
+Every way out puts the terminal back as it was: quit, Ctrl+C, SIGTERM, SIGHUP, SIGQUIT
+(Ctrl+backslash) and a bug, which then prints one line starting "Fail:" and exits 1. While
+the screen's own loop runs, a signal is only noted, and the loop takes the way out between
+keys, after every key it read has acted; then each key still waiting goes to the late path,
+so that an unkey typed just ahead of Ctrl+C still unkeys. NOFLSH is set while the screen is
+up, so that the signal keys do not throw those keys away. The tmux workspace is ended last,
+after the terminal is back, since ending it ends this terminal too.
 
 Importing this module only defines things: the settings are read in main().
 
@@ -58,7 +62,7 @@ HELP = (
     "GPL-2.0-or-later.",
 )
 POLL = 100  # milliseconds a key is waited for before the results and the clock are looked at
-EXIT_SIGNALS = (signal.SIGTERM, signal.SIGHUP)
+EXIT_SIGNALS = (signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT)  # SIGQUIT is Ctrl+backslash
 LONGEST = 80
 
 # The settings the screen chooses from, each with its words and its default first.
@@ -428,14 +432,22 @@ class Worker:
             self.results.put(("dead", e))
 
 
-def run_here(win, todo):
-    """A tool outside the workspace takes this terminal, and gives it back when it ends."""
+def run_here(win, todo, signals=None):
+    """A tool outside the workspace takes this terminal, and gives it back when it ends.
+
+    signals, the session's Signals: a way out already noted is taken before the tool starts,
+    and while the tool runs the old handlers are back, so that Ctrl+C belongs to the tool.
+    """
     argv = tool_argv(todo.argv)
     if shutil.which(argv[0]) is None:
         return "missing"
+    if signals is not None:
+        signals.stop_if_asked()
     curses.def_prog_mode()
     curses.endwin()
     paste_mode(False)  # the tool gets the terminal with bracketed paste off
+    if signals is not None:
+        signals.loud()
     try:
         print(f"\nRunning {todo.name}. This screen comes back when it ends.", flush=True)
         subprocess.call(argv)
@@ -450,6 +462,8 @@ def run_here(win, todo):
         except (KeyboardInterrupt, EOFError):
             pass
     finally:
+        if signals is not None:
+            signals.quiet()  # the screen's own loop again: a signal is only noted
         curses.reset_prog_mode()
         win.clear()
         win.refresh()
@@ -622,7 +636,10 @@ class PasteGuard:
 
     After a paste comes a wait in which no key acts: half a second after an end mark, two
     seconds after an Escape ended the paste, each started again by every code that comes in
-    it, and never more than five seconds in all. A start mark in a wait starts a new paste.
+    it, and never more than five seconds in all. A start mark in a wait starts a new paste. A
+    start mark the link cut, in a wait, is held as outside one: when the rest comes within a
+    second a new paste starts; when it does not, its codes that came in the wait were dropped
+    there as late codes, and are never keys.
     """
 
     def __init__(self):
@@ -634,6 +651,7 @@ class PasteGuard:
         self.last_at = None  # when the open paste last had a code
         # ([(code, when it came)] of a start mark seen after an Escape key, when the Escape came)
         self.start_seen = None
+        self.start_dropped = 0  # how many of the held start mark's first codes came in a wait, dropped there
         self.end_seen = None  # (the part of an end mark seen after an Escape, inside a paste, when)
         self.wait = None  # after a paste: [how long, when the last code came, when the wait began]
         self.notes = []  # words to say, for the loop
@@ -668,7 +686,10 @@ class PasteGuard:
         """The held characters of a start mark that did not go on: keys, for the key guard."""
         seen, _at = self.start_seen
         self.start_seen = None
-        items.extend(("key", code, at) for code, at in seen)  # each with its own time, for the key guard
+        dropped, self.start_dropped = self.start_dropped, 0
+        # The codes that came in a wait were dropped there as late codes, never keys; the rest are
+        # keys, each with its own time, for the key guard.
+        items.extend(("key", code, at) for code, at in seen[dropped:])
 
     def _release_end(self):
         """The held characters of an end mark that did not go on: text of the paste, its Escape left out."""
@@ -690,6 +711,7 @@ class PasteGuard:
         self.wait = None if wait is None else [wait, now, now]
 
     def _start(self, now):
+        self.start_dropped = 0
         self.open = True
         self.codes = []
         self.left_out = False
@@ -715,6 +737,10 @@ class PasteGuard:
                 i += len(want)
                 self._start(now)
             elif got == want[: len(got)] and i + len(got) == n:
+                if self.start_dropped == len(seen) and self._waiting(now):  # still in the wait: dropped
+                    self.wait[1] = now
+                    self._late(items, got, waiting=True)
+                    self.start_dropped += len(got)
                 self.start_seen = (seen + [(c, now) for c in got], at)
                 return items
             else:
@@ -746,6 +772,13 @@ class PasteGuard:
                         continue
                 if self._waiting(now):  # in the wait after a paste: dropped, and the wait starts again
                     self.wait[1] = now
+                    if code == ESC and i + 1 + len(after) == n and _is_prefix(after, START_MARK):
+                        # A start mark the link cut, in a wait: dropped, and held as outside a
+                        # wait, so that when the rest comes within a second a new paste starts.
+                        self._late(items, (code, *after), waiting=True)
+                        self.start_seen = ([(c, now) for c in after], now)
+                        self.start_dropped = len(after)
+                        return items
                     self._late(items, (code,), waiting=True)
                     i += 1
                     continue
@@ -754,6 +787,7 @@ class PasteGuard:
                     if i + 1 + len(after) == n and _is_prefix(after, START_MARK):
                         # the mark may go on in the next burst
                         self.start_seen = ([(c, now) for c in after], now)
+                        self.start_dropped = 0
                         return items
                     i += 1
                     continue
@@ -941,7 +975,7 @@ def colors_for(theme):
 
 
 class _Stop(Exception):
-    """SIGTERM or SIGHUP arrived."""
+    """SIGTERM, SIGHUP or SIGQUIT arrived."""
 
     def __init__(self, signum):
         super().__init__(signum)
@@ -950,6 +984,74 @@ class _Stop(Exception):
 
 def _on_signal(signum, frame):
     raise _Stop(signum)
+
+
+class Signals:
+    """The way out by a signal: Ctrl+C, SIGTERM, SIGHUP and SIGQUIT.
+
+    While the screen's own loop runs (quiet()), the handler only notes the signal, and the loop
+    takes the way out between keys with stop_if_asked(), never in the middle of a burst. Around
+    a tool that runs in this terminal (loud()), the old handlers are back: Ctrl+C is
+    KeyboardInterrupt, which the tool's runner takes, and the others raise _Stop at once.
+    """
+
+    def __init__(self):
+        self.noted = []
+
+    def note(self, signum, frame):
+        self.noted.append(signum)
+
+    def quiet(self):
+        for signum in (*EXIT_SIGNALS, signal.SIGINT):
+            signal.signal(signum, self.note)
+
+    def loud(self):
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+        for signum in EXIT_SIGNALS:
+            signal.signal(signum, _on_signal)
+
+    def stop_if_asked(self):
+        """Take the way out when a signal was noted: Ctrl+C is KeyboardInterrupt, the others _Stop."""
+        if self.noted:
+            signum = self.noted[0]
+            if signum == signal.SIGINT:
+                raise KeyboardInterrupt()
+            raise _Stop(signum)
+
+
+def keep_typed_ahead(fd):
+    """Set NOFLSH, so that Ctrl+C, Ctrl+backslash and the other signal keys no longer throw away
+    the keys typed ahead of them. The terminal's settings saved before curses started are put
+    back on every way out, and NOFLSH with them. curses is told, so that it keeps NOFLSH when it
+    sets the program's mode again."""
+    try:
+        attrs = termios.tcgetattr(fd)
+        attrs[3] |= termios.NOFLSH
+        termios.tcsetattr(fd, termios.TCSANOW, attrs)
+        curses.def_prog_mode()
+    except (termios.error, curses.error):
+        pass
+
+
+def drain_on_signal(win, model, urgent):
+    """On a way out by a signal: read every key already waiting, with no wait, at most BURST_MOST,
+    and hand each to model.late(), as a key late after a paste: a key of unkey unkeys, and a key
+    of lock locks when not locked; nothing else acts. A paste's marks and text are only codes
+    here, and do nothing."""
+    try:
+        win.nodelay(True)
+        for _ in range(BURST_MOST):
+            code = win.getch()
+            if code == -1:
+                break
+            name = None if code == curses.KEY_RESIZE else key_name(code)
+            if name is None:
+                continue
+            for todo in model.late(name) or ():
+                if is_urgent(todo):
+                    urgent.put(todo)
+    except curses.error:
+        pass
 
 
 ESCDELAY_MS = "100"
@@ -1213,8 +1315,13 @@ class _Ending:
         self.close_workspace = False
 
 
-def _loop(win, model, common, urgent, results, look, ports, ending):
-    """Keys, results and the clock, until Quit. Returns the exit code."""
+def _loop(win, model, common, urgent, results, look, ports, ending, signals=None):
+    """Keys, results and the clock, until Quit. Returns the exit code.
+
+    signals, the session's Signals: the loop takes the way out a signal asked for at the next
+    pass, after every key it already read has acted.
+    """
+    signals = signals or Signals()
     redraw = True
     last = None
 
@@ -1233,7 +1340,7 @@ def _loop(win, model, common, urgent, results, look, ports, ending):
                 win.clearok(True)
                 redraw = True
             elif isinstance(todo, sm.Tool) and not ports.workspace:
-                result = run_here(win, todo)
+                result = run_here(win, todo, signals)
                 redraw = True
                 if hand(model.finished(todo, result, None, time.strftime("%H:%M:%S"))):
                     return True
@@ -1252,6 +1359,7 @@ def _loop(win, model, common, urgent, results, look, ports, ending):
         return 0
     pasting = False
     while True:
+        signals.stop_if_asked()
         last = paint(win, model, look, last, redraw)
         redraw = False
         if not pasting:
@@ -1266,6 +1374,7 @@ def _loop(win, model, common, urgent, results, look, ports, ending):
             redraw = redraw or resized
             if codes and keys.burst(codes, time.monotonic()):
                 return 0
+        signals.stop_if_asked()  # between bursts: every key read has acted
         if keys.poll(time.monotonic()):
             return 0
         while True:
@@ -1289,12 +1398,15 @@ def _session(model, ports, theme, ending):
     """Start curses, run the loop, and put the terminal back on every way out."""
     fd = sys.stdin.fileno()
     saved = termios.tcgetattr(fd)
-    handlers = {signum: signal.signal(signum, _on_signal) for signum in EXIT_SIGNALS}
+    signals = Signals()
+    handlers = {signum: signal.getsignal(signum) for signum in EXIT_SIGNALS}
+    signals.quiet()  # Ctrl+C is put back to the default on the way out
     set_escdelay(os.environ)
     results = queue.Queue()
     common = Worker(Link(ports.cmd_port), ports, results, "d750ctrl-link")
     urgent = Urgent(ports, results)
     win = None
+    signalled = False
     try:
         win = curses.initscr()
         curses.noecho()
@@ -1305,12 +1417,21 @@ def _session(model, ports, theme, ending):
         except curses.error:
             pass
         win.timeout(POLL)
+        keep_typed_ahead(fd)
         look = Look(theme, True, colors_for(theme))
         common.start()
-        return _loop(win, model, common, urgent, results, look, ports, ending)
+        return _loop(win, model, common, urgent, results, look, ports, ending, signals)
+    except (KeyboardInterrupt, _Stop):
+        signalled = True
+        raise
     finally:
         for signum in (*EXIT_SIGNALS, signal.SIGINT):
             signal.signal(signum, signal.SIG_IGN)  # nothing may cut the putting back short
+        if signalled and win is not None:
+            try:
+                drain_on_signal(win, model, urgent)  # U typed just ahead of Ctrl+C still unkeys
+            except Exception:  # noqa: BLE001  putting the terminal back comes first
+                pass
         if win is not None:
             try:
                 win.keypad(False)
@@ -1332,7 +1453,7 @@ def _session(model, ports, theme, ending):
         common.stop()
         signal.signal(signal.SIGINT, signal.default_int_handler)
         for signum, handler in handlers.items():
-            signal.signal(signum, handler)
+            signal.signal(signum, signal.SIG_DFL if handler is None else handler)
 
 
 # --------------------------------------------------------------------------- options

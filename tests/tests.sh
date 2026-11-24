@@ -26,6 +26,27 @@ check "status tnc" "tnc: KISS on band B" d750 status
 check "raw ID" "ID TM-D750" d750 raw ID
 check "raw refuses TX" "not allowed" d750 raw TX
 check "raw refuses BE, which can send a beacon" "not allowed" d750 raw BE
+# lines the command port refuses whole, and that reach the simulator not at all (test-env.sh records every line it gets)
+SIMLINES="$D750_LOG_DIR/sim-lines.txt"
+check "the simulator records the lines it receives" "RX" cat "$SIMLINES"
+reached() {  # reached FORMAT : the command port's answer to printf FORMAT, and how many lines the simulator got
+  local before after answer
+  before=$(wc -l < "$SIMLINES")
+  answer=$(printf "$1" | nc -w 2 127.0.0.1 4543 | head -1)
+  sleep 0.3
+  after=$(wc -l < "$SIMLINES")
+  echo "$answer; $((after - before)) lines reached the radio"
+}
+check "a carriage return inside a line is refused" "ERR only plain letters, digits, spaces and , . - / + are allowed; 0 lines reached the radio" reached 'ID\rTX\n'
+check "TX with anything after it is refused" "ERR TX is not allowed on this port; 0 lines reached the radio" reached 'TX0\n'
+check "a daemon word in capitals is refused" "ERR say the word alone, in small letters; 0 lines reached the radio" reached 'UNLOCK\n'
+check "a line starting with a digit is refused" "ERR a line may not start with a digit; 0 lines reached the radio" reached '0M\n'
+check "an ordinary line reaches the radio" "ID TM-D750; 1 lines reached the radio" reached 'ID\r\n'
+check "lock dry run" "would send: lock" d750 -n lock
+check "the lock dry run left it unlocked" "; unlocked;" d750 state
+check "unlock dry run" "would send: unlock" d750 -n unlock
+check "ptt off dry run" "would send: T 0" d750 -n ptt off
+check "raw dry run" "would send: ID" d750 -n raw ID
 check "freq dry run" "would send: FQ 0,0146520000" d750 freq A 146.520 -n
 check "freq set" "after: band A 146.520 MHz" d750 freq A 146.520
 check "freq refused out of band" "refused" d750 freq A 27.000

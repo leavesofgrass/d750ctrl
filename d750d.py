@@ -6,13 +6,20 @@ OpenSlot and any other Hamlib-aware program (choose the rig "NET rigctl", addres
 chk_vfo and dump_state for the opening handshake, f F m M v V t T s S l L, get_vfo_info,
 get_powerstat, get_lock_mode and the long names of the same. VFOA is band A, VFOB band B, the
 current VFO the band that transmits; modes FM, FMN, AM and DSTAR; levels STRENGTH, RAWSTR,
-RFPOWER and SQL. T 1 keys, T 0 unkeys, answered with RPRT 0.
+RFPOWER and SQL. T 1 keys, T 0 unkeys, answered with RPRT 0. T takes exactly one value: 0 is off, 1 to 3 are on; any other is refused.
 Port 4533, line protocol for the d750 command and the probe: one Kenwood command per
 line, the radio's answer line back, or ERR and a reason. Daemon words: state, lock,
-unlock, reconnect, quit.
+unlock, reconnect, quit, each only alone and in small letters.
 
-Safety: unkey at start, when a client drops while keyed, on serial errors, after
-MAX_KEY_SECONDS, and TX is refused while locked.
+What a line may hold. Each port's line end, a newline with one carriage return before it, is taken
+off first, and a line over 512 characters is refused; it is read with a limit, never held whole. On
+4533 a line may hold only letters, digits, the space and , . - / +, may not start with a digit, and
+is refused when its command, its first two characters after leading spaces, is one that keys or moves
+the radio (UNSAFE). On 4532 a line may hold any character from 32 to 126.
+
+Safety: unkey at start, when a client drops, on serial errors, after MAX_KEY_SECONDS. While locked,
+PTT is refused, and so are VX with any value but 0, TN with a value that is not TNC off, and PT with
+any value, which can make the radio send by itself. lock and every unkey send RX and check the answer.
 The log, with a time stamp, in ~/.local/share/d750ctrl/log/d750d-DATE.txt: keying, sets, refusals,
 errors, the serial port opening and closing, and bytes the radio sends unasked, each APRS packet
 as one line. Routine reads on 4533 that the radio answers stay out of it, and the same error
@@ -21,6 +28,7 @@ Grown out of a keying shim on Saturday, November 7, 2026. Runs as the user servi
 Environment: D750_PORT (device), D750_PTT_PORT, D750_CMD_PORT, D750_LOG_DIR, D750_BAUD, so a
 second instance can run against the simulator (tests/d750-sim.py) without touching the real one.
 """
+import math
 import os
 import re
 import socket
@@ -50,6 +58,14 @@ LONG_NAMES = {"get_freq": "f", "set_freq": "F", "get_mode": "m", "set_mode": "M"
               "set_level": "L", "get_func": "u", "set_func": "U", "get_info": "_", "quit": "q"}
 # only PTT may key; the rest never go through 4533. BE can send an APRS beacon with the TNC in APRS mode.
 UNSAFE = {"TX", "RX", "UP", "DW", "SR", "PS", "0M", "0G", "BE"}
+# Refused on 4533 while locked: they arm the radio to send by itself (VOX on, the TNC in APRS or KISS, the beacon).
+ARMS = ("VX", "TN", "PT")
+LINE_LIMIT = 512
+# The two ports differ on purpose. A line on 4533 goes to the radio as text, so it may hold only what a
+# Kenwood command needs. Nothing on 4532 reaches the radio as text: d750d builds each command itself, and
+# hamlib's clients need \ and _ there (\chk_vfo, \dump_state), so 4532 refuses only characters outside 32 to 126.
+CMD_CHARS = frozenset(b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 ,.-/+")
+CMD_CHARS_SAID = "only plain letters, digits, spaces and , . - / + are allowed"
 LOG_ALL = os.environ.get("D750_LOG_ALL", "").strip().lower() not in ("", "0", "no", "off", "false")
 REPEAT_SECONDS = 60.0
 # Kenwood reads that take one band or channel number: FQ 0, BY 1, ME 005. With a comma they are sets.
@@ -134,6 +150,7 @@ class Radio:
         self.ser = None
         self.lock = threading.Lock()
         self.keyed_since = None
+        self.unkey_failing = False          # an unkey failed and the belief stayed keyed
         self.locked = False
         self.last_answer = None
         self.unsolicited = 0
@@ -200,23 +217,45 @@ class Radio:
             log(f"unsolicited {len(other)} bytes on the port, discarded: {other[:40]!r}")
 
     def ptt(self, on):
+        """TX or RX. An unkey counts only when the radio answers RX: until then the belief stays keyed,
+        so the watchdog tries again."""
         if on and self.locked:
             raise OSError("locked: PTT refused")
         t0 = time.monotonic()
         reply = self.command("TX" if on else "RX")
         ms = (time.monotonic() - t0) * 1000
-        self.keyed_since = time.monotonic() if on else None
+        if on:
+            self.keyed_since = time.monotonic()
+            self.unkey_failing = False
+        elif reply == "RX":
+            self.keyed_since = None
+            self.unkey_failing = False
         log(f"{'key' if on else 'unkey'} in {ms:.0f} ms, radio said {reply!r}")
         return reply
 
     def unkey_quietly(self, why):
-        if self.keyed_since is None:
-            return
+        """RX whenever asked, keyed or not, and the answer checked. True when the radio said RX.
+        "unkey" goes in the log only when the radio was keyed; a failure is logged, and counted when it repeats."""
+        keyed = self.keyed_since is not None
         try:
-            log(f"unkey: {why}")
-            self.ptt(False)
+            if keyed and not self.unkey_failing:     # the watchdog's tries after a failed one are counted below
+                log(f"unkey: {why}")
+            t0 = time.monotonic()
+            reply = self.command("RX")
         except Exception as e:  # noqa: BLE001
-            log(f"unkey failed ({why}): {e}")
+            self.unkey_failing = keyed
+            repeats.note(f"unkey failed ({why}): {e}", f"unkey failed ({why}): {e}")
+            return False
+        if reply != "RX":
+            self.unkey_failing = keyed
+            repeats.note(f"unkey not confirmed ({why})",
+                         f"unkey not confirmed ({why}): the radio did not say it is receiving, it said {reply!r}")
+            return False
+        if keyed:
+            log(f"unkey in {(time.monotonic() - t0) * 1000:.0f} ms, radio said {reply!r}")
+        self.keyed_since = None
+        self.unkey_failing = False
+        return True
 
     def field(self, cmd, n=1):
         """Field n of the answer to a Kenwood query: FQ 0 -> 'FQ 0,0144990000' -> field 1 is the frequency."""
@@ -294,6 +333,14 @@ def parse_vfo(word):
     return None
 
 
+def finite(text):
+    """A number hamlib may send for F or L: not inf, not nan, not a word."""
+    try:
+        return math.isfinite(float(text))
+    except ValueError:
+        return False
+
+
 def rigctl(line):
     """Answer one line of hamlib's NET rigctl protocol; None means the client said quit."""
     ext = ""
@@ -327,9 +374,11 @@ def rigctl(line):
         if cmd == "_": return out([f"TM-D750 through d750d {VERSION}"], "get_info", ["Info"])
         if cmd == "t": return out(["1" if radio.keyed_since is not None else "0"], "get_ptt", ["PTT"])
         if cmd == "T":
-            if not args: return fail(-1)
+            if len(args) != 1 or args[0] not in ("0", "1", "2", "3"): return fail(-1)
             radio.ptt(args[0] != "0")
             return out([], "set_ptt")
+        if cmd == "F" and (len(args) < 1 or not finite(args[0])): return fail(-1)
+        if cmd == "L" and (len(args) < 2 or not finite(args[1])): return fail(-1)
         band = radio.tx_band()
         if cmd == "v": return out([f"VFO{'AB'[band]}"], "get_vfo", ["VFO"])
         if cmd == "V":
@@ -378,11 +427,64 @@ def rigctl(line):
         return fail(-1)
 
 
+def read_line(f, limit=LINE_LIMIT):
+    """One line from a client: (bytes, too long), or (None, False) at the end of input. The line end,
+    a newline with one carriage return before it, is taken off. The line is read with a limit, so one
+    longer than limit is never held whole: the rest of it is read and dropped in pieces."""
+    raw = f.readline(limit + 2)
+    if not raw:
+        return None, False
+    if not raw.endswith(b"\n") and len(raw) >= limit + 2:
+        while True:
+            more = f.readline(4096)
+            if not more or more.endswith(b"\n"):
+                return b"", True
+    if raw.endswith(b"\n"):
+        raw = raw[:-1]
+        if raw.endswith(b"\r"):
+            raw = raw[:-1]
+    return raw, len(raw) > limit
+
+
+def judge_cmd(raw, locked):
+    """What 4533 does with one line, its end taken off: ("refuse", why), ("word", the daemon word),
+    ("blank", ""), or ("radio", the Kenwood command to send). Checked before anything else touches it."""
+    if any(c not in CMD_CHARS for c in raw):
+        return "refuse", CMD_CHARS_SAID
+    text = raw.decode("ascii")
+    if text in DAEMON_WORDS:
+        return "word", text
+    line = text.strip(" ")
+    if not line:
+        return "blank", ""
+    if line[0].isdigit():
+        return "refuse", "a line may not start with a digit"
+    if line.split(" ")[0].lower() in DAEMON_WORDS:
+        return "refuse", "say the word alone, in small letters"
+    cmd = line[:2].upper()
+    if cmd in UNSAFE:
+        return "refuse", f"{cmd} is not allowed on this port"
+    if locked and cmd in ARMS:
+        value = line[2:].strip(" ")
+        if (cmd == "VX" and value not in ("", "0")) or (cmd == "TN" and value and value.split(",")[0].strip(" ") != "0") \
+                or (cmd == "PT" and value):
+            return "refuse", f"{cmd} is refused while PTT is locked"
+    return "radio", line
+
+
 def serve_ptt(conn, peer):
     f = conn.makefile("rwb", buffering=0)
     try:
-        for raw in f:
-            line = raw.decode(errors="replace").strip()
+        while True:
+            raw, too_long = read_line(f)
+            if raw is None:
+                break
+            if too_long or any(not 32 <= c <= 126 for c in raw):
+                why = f"longer than {LINE_LIMIT} characters" if too_long else "a character outside 32 to 126"
+                log(f"rigctl client {peer}: refused {printable(raw[:80])!r}: {why}")
+                f.write(b"RPRT -1\n")
+                continue
+            line = raw.decode("ascii").strip()
             if not line:
                 continue
             try:
@@ -396,24 +498,38 @@ def serve_ptt(conn, peer):
     except Exception as e:  # noqa: BLE001
         log(f"ptt client {peer} dropped: {e}")
     finally:
-        radio.unkey_quietly("ptt client disconnected while keyed")
+        radio.unkey_quietly("ptt client disconnected")
         conn.close()
 
 
 def serve_cmd(conn, peer):
     f = conn.makefile("rwb", buffering=0)
     try:
-        for raw in f:
-            line = raw.decode(errors="replace").strip()
-            if not line:
+        while True:
+            raw, too_long = read_line(f)
+            if raw is None:
+                break
+            if too_long:
+                what, line = "refuse", f"the line is longer than {LINE_LIMIT} characters"
+            else:
+                what, line = judge_cmd(raw, radio.locked)
+            if what == "blank":
                 continue
-            word = line.split()[0]
-            if word.lower() in DAEMON_WORDS:
-                w = word.lower()
+            if what == "refuse":
+                f.write(f"ERR {line}\n".encode())
+                log(f"cmd client {peer}: refused {printable(raw[:80])!r}: {line}")
+                continue
+            if what == "word":
+                w = line
                 if w == "state":
                     f.write((radio.state() + "\n").encode())
                 elif w == "lock":
-                    radio.locked = True; radio.unkey_quietly("lock requested"); f.write(b"OK locked, PTT refused until unlock\n")
+                    radio.locked = True
+                    if radio.unkey_quietly("lock requested"):
+                        f.write(b"OK locked, PTT refused until unlock\n")
+                    else:
+                        log("lock: locked, but the radio did not say it is receiving")
+                        f.write(b"OK locked; the radio did not say it is receiving\n")
                 elif w == "unlock":
                     radio.locked = False; f.write(b"OK unlocked\n")
                 elif w == "reconnect":
@@ -424,10 +540,6 @@ def serve_cmd(conn, peer):
                         f.write(f"ERR {e}\n".encode())
                 elif w == "quit":
                     break
-                continue
-            if word.upper() in UNSAFE:
-                f.write(f"ERR {word} is not allowed on this port; keying goes through 4532\n".encode())
-                log(f"cmd client {peer}: refused {line!r}")
                 continue
             try:
                 reply = radio.command(line)

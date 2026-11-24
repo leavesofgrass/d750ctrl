@@ -73,6 +73,9 @@ jobs:
           sleep 2
           exit $rc
 
+      - name: The daemon's line rules, through its own ports against the simulator (d750d-test.py)
+        run: python3 -I tests/d750d-test.py
+
       - name: The rig screen's keys, with no terminal (keymap-test.py)
         run: python3 -I tests/keymap-test.py
 

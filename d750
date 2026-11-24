@@ -96,8 +96,13 @@ cmd=${1:-help}; shift || true
 case "$cmd" in
 help|-h|--help) sed -n '2,46p' "$0" | sed 's/^# \{0,1\}//' ;;
 state) ask state ;;
-lock|unlock) ask "$cmd" ;;
-raw) [ $# -ge 1 ] || usage "raw CMD [ARGS]"; r=$(ask "$*"); say "$r"; if [[ $r == ERR* ]]; then exit 1; fi ;;
+lock|unlock)
+  if [ "$DRY" = 1 ]; then say "would send: $cmd" >&2; exit 0; fi
+  r=$(ask "$cmd"); say "$r"; if [[ $r == ERR* ]]; then exit 1; fi ;;
+raw)
+  [ $# -ge 1 ] || usage "raw CMD [ARGS]"
+  if [ "$DRY" = 1 ]; then say "would send: $*" >&2; exit 0; fi
+  r=$(ask "$*"); say "$r"; if [[ $r == ERR* ]]; then exit 1; fi ;;
 probe) exec python3 -I "$HERE/probe.py" "$@" ;;
 log)
   f="$LOGDIR/d750d-$(date +%F).txt"; [ -r "$f" ] || fail "no daemon log yet for today"
@@ -274,7 +279,10 @@ record)
   timeout "$((n + 2))" parecord --device="$dev" --rate=48000 --channels=1 --format=s16le --file-format=wav "$out" 2>/dev/null
   say "recorded $(du -h "$out" | cut -f1) to $out from the $which side" ;;
 
-ptt) [ "${1:-}" = off ] || usage "ptt off"; r=$(tcp "$PTT_PORT" "T 0"); [ "$r" = "RPRT 0" ] || fail "unkey: $r"; say "unkey: $r" ;;
+ptt)
+  [ "${1:-}" = off ] || usage "ptt off"
+  if [ "$DRY" = 1 ]; then say "would send: T 0" >&2; exit 0; fi
+  r=$(tcp "$PTT_PORT" "T 0"); [ "$r" = "RPRT 0" ] || fail "unkey: $r"; say "unkey: $r" ;;
 
 doctor)
   ok=0; bad=0; p() { say "Pass: $*"; ok=$((ok + 1)); }; f() { say "Fail: $*"; bad=$((bad + 1)); }

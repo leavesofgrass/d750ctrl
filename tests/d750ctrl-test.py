@@ -8,8 +8,9 @@ wait behind them. A small model of an xterm reads what curses draws and where th
 
 Nothing transmits and nothing plays sound: D750_XARA_PORT is a port this test picked, where only
 the test itself listens, to see that no frame is sent; the tools on PATH are stubs that only write
-down their arguments; no send question is ever answered y, and no send is ever finished. The test
-ends only the test bed it started. Exit 0 when every test passes.
+down their arguments; no send question is answered y but in one test, which first checks that the
+frame's catcher is not on a station port and must show that nothing is sent; no send is ever
+finished. The test ends only the test bed it started. Exit 0 when every test passes.
 GPL-2.0-or-later.
 """
 import curses
@@ -32,7 +33,9 @@ import traceback
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOP = os.path.dirname(HERE)
 sys.path.insert(0, TOP)
+sys.path.insert(0, HERE)
 
+import fakedaemon as fd  # noqa: E402
 from d750ui import lines  # noqa: E402
 from d750ui import screen as scr  # noqa: E402
 from d750ui import screen_model as sm  # noqa: E402
@@ -50,6 +53,9 @@ OPEN, CLOSE = "\x1b[200~", "\x1b[201~"  # the marks a terminal puts around a pas
 STATUS, BUSY = 3, 0.75  # not the defaults (2 and 1), so the test sees the settings read
 DAEMON_WORDS = ("state", "lock", "unlock", "reconnect", "quit")
 READY = "d750ctrl. Receiving."
+STATION_PORTS = (8300, 4532, 4533)  # xara and the daemon on the station: no test ever uses them
+MAIN_HINT = "Tab band. Up, Down tune. V view. ? help"
+BED = [None]  # the test bed this run started, so that one test can start it again
 
 
 class Timeout(Exception):
@@ -1103,6 +1109,10 @@ def test_sigterm_puts_the_terminal_back():
 
 def test_sighup_puts_the_terminal_back():
     _way_out(signal.SIGHUP, 128 + signal.SIGHUP)
+
+
+def test_sigquit_puts_the_terminal_back():
+    _way_out(signal.SIGQUIT, 128 + signal.SIGQUIT)
 
 
 def test_a_bug_puts_the_terminal_back_and_says_fail():
@@ -2298,6 +2308,298 @@ def test_the_first_lock_after_a_restart_is_kept():
         run.end()
 
 
+# --------------------------------------------------------------------------- the carried fixes
+
+
+def test_paste_guard_a_start_mark_cut_in_a_wait():
+    first = (OPEN + "a" + CLOSE, 0.0)
+    # The second paste's Escape alone in the wait, its rest 0.7 seconds later: a new paste.
+    assert pasted([first, ("\x1b", 0.3), ("[200~y" + CLOSE, 1.0)]) == P("a") + LATE("\x1b") + P("y")
+    for cut in range(1, len(OPEN)):
+        head, rest = OPEN[:cut], OPEN[cut:]
+        items = pasted([first, (head, 0.2), (rest + "y" + CLOSE, 0.9)])
+        assert items == P("a") + LATE(head) + P("y"), ("goes on", cut, items)
+        items = pasted([first, (head, 0.2), ("zz", 0.5)])
+        assert items == P("a") + LATE(head) + LATE("zz"), ("not going on, still in the wait", cut, items)
+        items = pasted([first, (head, 0.2), (None, 1.5), ("zz", 1.6)])
+        assert items == P("a") + LATE(head) + K("zz"), ("a second passed: never keys", cut, items)
+        items = pasted([first, (head, 0.2), (rest + "y" + CLOSE, 1.5)])
+        assert items[: 1 + len(head)] == P("a") + LATE(head), ("too late to go on: the head stays dropped", cut, items)
+        assert not any(item[0] == "paste" for item in items[1 + len(head) :]), ("too late to go on", cut, items)
+    # Begun in the wait and gone on after it: what came in the wait is dropped, the rest are keys
+    # with their own times, for the key guard, which drops them as a broken sequence.
+    assert pasted([first, ("\x1b", 0.2), ("[2", 0.8), (None, 2.0)]) == P("a") + LATE("\x1b") + K("[2")
+    keys = scr.SequenceGuard()
+    keys.saw_escape(0.2)  # what the loop tells the key guard of the late Escape
+    assert [keys.take(code, 0.8)[0] for code in C("[2")] == [None, None]
+
+
+def _hand_clock_keys(what):
+    """The probe's bytes through Keys, the paste guard and the real model, with a clock given by
+    hand: the question of what is open, then two marked pastes, the second's start mark cut in
+    the wait after the first. Returns the Runner and what was done after the pastes."""
+    r = fd.Runner(xara_port=XARA_PORT)
+    r.model.size(80, 24)
+    now = [100.0]
+
+    def hand(todos):
+        todos = list(todos or ())
+        if any(isinstance(x, sm.Quit) for x in todos):
+            return True
+        r.run(todos)
+        return False
+
+    keys = scr.Keys(PretendWindow([]), r.model, hand, clock=lambda: now[0])
+
+    def burst(text, at):
+        now[0] = at
+        keys.burst(C(text), at)
+        keys.poll(at)
+
+    if what == "unlock":
+        burst("L", 100.0)
+        burst("L", 102.0)
+    else:
+        burst("c", 100.0)
+        burst("c", 101.0)
+    start = len(r.done)
+    burst(OPEN + "hi" + CLOSE, 103.0)
+    burst("\x1b", 103.3)  # 0.2 seconds later, and ESCDELAY's 0.1 before curses gives it
+    burst("[200~y" + CLOSE, 104.0)
+    for at in (104.5, 105.5, 107.0):
+        now[0] = at
+        keys.poll(at)
+    return r, r.done[start:]
+
+
+def test_a_start_mark_cut_in_a_wait_with_no_clock_at_both_questions():
+    r, done = _hand_clock_keys("unlock")
+    assert r.model.asked == "unlock" and r.daemon.locked, (r.model.asked, r.daemon.locked)
+    assert not any(isinstance(x, sm.Set) and x.line == "unlock" for x in done), done
+    assert r.model.message == scr.WAIT_WORDS or r.model.message == sm.PASTE_DROPPED, r.model.message
+    r, done = _hand_clock_keys("frame")
+    assert r.model.asked == "frame_send", r.model.asked
+    assert r.carrier.frames == [] and not any(isinstance(x, sm.SendFrame) for x in done), done
+
+
+def _a_mark_cut_in_the_wait(run, text):
+    """Two marked pastes 0.2 seconds apart; the second's Escape alone, its rest 0.7 seconds later."""
+    run.press(OPEN + "hi" + CLOSE)
+    time.sleep(0.2)
+    run.press(ESC_KEY)
+    time.sleep(0.7)
+    run.press("[200~" + text + CLOSE)
+
+
+def test_a_start_mark_cut_in_the_wait_at_the_unlock_question():
+    run = _unlocked_face()
+    try:
+        _lock_and_ask(run)
+        _a_mark_cut_in_the_wait(run, "y")
+        _still_locked_then_unlock(run)
+        run.quit_cleanly("Q")
+    finally:
+        if "; locked" in ask("state"):
+            ask("unlock")
+        run.end()
+
+
+def test_a_start_mark_cut_in_the_wait_at_the_frame_question():
+    # The one test that writes a y at a send question: first, the frame's catcher is no station port.
+    assert XARA_PORT not in STATION_PORTS + (CMD_PORT, PTT_PORT), XARA_PORT
+    assert XARA.srv.getsockname() == ("127.0.0.1", XARA_PORT), XARA.srv.getsockname()
+    run = _unlocked_face()
+    try:
+        before = len(XARA.got)
+        run.press("c")
+        run.shows("Frame: c CQ, b beacon, n no", 23, 5)
+        answer(run, "c")
+        run.wait_for(lambda: run.term.text(23).startswith("Send one CQ frame"), "the send question", 5)
+        question = run.term.text(23)
+        run.soak(0.7)
+        _a_mark_cut_in_the_wait(run, "y")
+        run.soak(2.5)
+        assert len(XARA.got) == before, f"a frame was handed over: {XARA.got[before:]}"
+        assert run.term.text(23) == question, f"the question went:\n{run.dump()}"
+        answer(run, "n")
+        run.shows("Nothing sent.", 22, 5)
+        run.soak(0.5)
+        assert len(XARA.got) == before, XARA.got[before:]
+        run.quit_cleanly("Q")
+    finally:
+        run.end()
+
+
+def test_unkey_and_lock_in_a_window_too_small_in_help_and_the_memory_list():
+    run = _unlocked_face()
+    try:
+        for opener, hint in (("?", sm.HELP_HINT), ("C", sm.MEMORY_HINT)):
+            run.press(opener)
+            run.shows(hint, 23, 5)
+            run.resize(20, 5)
+            run.wait_for(lambda: run.term.text(0).startswith("Window too small"), "too small", 5)
+            run.soak(0.5)
+            t0 = time.monotonic()
+            run.press("U")
+            assert wait_until(lambda: run.ptt.first("T 0", t0) is not None, 3, 0.02), f"U did nothing after {opener}"
+            t1 = time.monotonic()
+            run.press("L")
+            assert wait_until(lambda: run.cmd.first("lock", t1) is not None, 3, 0.02), f"L did nothing after {opener}"
+            assert wait_until(lambda: "; locked" in ask("state")), "not locked"
+            run.resize(80, 24)
+            run.shows(hint, 23, 5)
+            run.wait_for(lambda: run.term.text(0).startswith("d750ctrl. Receiving. PTT locked."), "PTT locked", 5)
+            run.press(ESC_KEY)
+            run.shows(MAIN_HINT, 23, 5)
+            run.soak(1.5)
+            run.press("L")
+            run.shows("Unlock PTT? y or n", 23, 5)
+            answer(run, "y")
+            assert wait_until(lambda: "; unlocked" in ask("state")), "not unlocked"
+            run.wait_for(lambda: run.term.text(0).startswith("d750ctrl. Receiving. Unlocked."), "Unlocked", 5)
+            run.soak(0.5)
+        run.quit_cleanly("Q")
+    finally:
+        if "; locked" in ask("state"):
+            ask("unlock")
+        run.end()
+
+
+def _unkey_and_a_signal_key_in_one_write(key, want):
+    run = _unlocked_face()
+    try:
+        run.ptt.slow = 0.3  # the PTT port answers after a pause
+        t0 = time.monotonic()
+        run.press("U" + key)  # one write
+        code = run.exited()
+        assert code == want, f"exit code {code}, not {want}"
+        assert wait_until(lambda: run.ptt.first("T 0", t0) is not None, 2, 0.02), "the unkey never reached the daemon"
+        answered = [t for t, line in run.ptt.answered if line == "T 0" and t >= t0]
+        assert answered, "the unkey was not answered"
+        assert run.ended_at >= answered[0] - 0.05, \
+            f"the program ended {answered[0] - run.ended_at:.2f} s before its unkey was answered"
+        run.settings_back()
+        run.left_the_screen()
+    finally:
+        run.ptt.slow = 0.0
+        run.end()
+
+
+def test_an_unkey_and_ctrl_c_in_one_write():
+    _unkey_and_a_signal_key_in_one_write("\x03", 0)
+
+
+def test_an_unkey_and_ctrl_backslash_in_one_write():
+    _unkey_and_a_signal_key_in_one_write("\x1c", 128 + signal.SIGQUIT)
+
+
+def test_ctrl_c_in_a_tool_belongs_to_the_tool():
+    run = _unlocked_face()
+    try:
+        before = len(stub_log())
+        run.press("R")
+        run.shows("RTTY: r receive, s send", 23, 5)
+        answer(run, "r")
+        run.soak(0.5)
+        run.press("\r")  # receive for the default seconds: the stub tool runs in this terminal
+        run.wait_for(lambda: b"Done. Enter goes back to d750ctrl." in bytes(run.term.raw), "the tool's prompt", 10)
+        assert stub_log()[before:] == ["d750-rtty rx 60"], stub_log()[before:]
+        at = len(run.term.raw)
+        run.press("\x03")  # at the tool's own prompt: Ctrl+C belongs to the tool
+        run.wait_for(lambda: ENTER_ALTERNATE in bytes(run.term.raw)[at:], "the screen back after Ctrl+C", 10)
+        run.wait_for(lambda: run.term.text(0).startswith(READY), "the status row after the tool", 10)
+        run.soak(0.5)
+        assert run.proc.poll() is None, f"Ctrl+C in the tool ended d750ctrl: exit {run.proc.returncode}"
+        run.quit_cleanly("Q")
+    finally:
+        run.end()
+
+
+def test_a_key_still_waiting_at_a_way_out_goes_to_the_late_path():
+    # A U typed at a tool's prompt with no Enter waits in the terminal; SIGTERM then ends the
+    # program, and the way out reads it and unkeys. Nothing else typed acts.
+    run = _unlocked_face()
+    try:
+        radio = [ask(line) for line in ("MD 0", "PC 0", "BC")]
+        run.press("R")
+        run.shows("RTTY: r receive, s send", 23, 5)
+        answer(run, "r")
+        run.soak(0.5)
+        run.press("\r")
+        run.wait_for(lambda: b"Done. Enter goes back to d750ctrl." in bytes(run.term.raw), "the tool's prompt", 10)
+        t0 = time.monotonic()
+        run.press("mpbU")  # no Enter: these wait in the terminal
+        run.soak(0.3)
+        assert run.ptt.first("T 0", t0) is None, "the unkey went before the way out"
+        run.proc.send_signal(signal.SIGTERM)
+        code = run.exited()
+        assert code == 128 + signal.SIGTERM, f"exit code {code}"
+        assert wait_until(lambda: run.ptt.first("T 0", t0) is not None, 2, 0.02), "the waiting U never unkeyed"
+        assert [ask(line) for line in ("MD 0", "PC 0", "BC")] == radio, "a waiting letter changed the radio"
+        run.settings_back()
+        run.left_the_screen()
+    finally:
+        run.end()
+
+
+def test_the_drain_at_a_way_out_hands_keys_to_the_late_path():
+    class Kept:
+        def __init__(self):
+            self.put_ = []
+
+        def put(self, todo):
+            self.put_.append(todo)
+
+    r = fd.Runner(xara_port=XARA_PORT)
+    r.model.size(80, 24)
+    codes = C("y\rmp" + OPEN + "U" + CLOSE) + [curses.KEY_RESIZE, ord("L")]
+    win, kept = PretendWindow(codes), Kept()
+    scr.drain_on_signal(win, r.model, kept)
+    assert kept.put_ == [sm.Unkey(), sm.Set("lock")], kept.put_
+    assert win.codes == [] and win.waits[0] == ("nodelay", True), win.waits
+    win, kept = PretendWindow([ord("U")] * (scr.BURST_MOST + 5)), Kept()
+    scr.drain_on_signal(win, r.model, kept)
+    assert len(win.codes) == 5 and len(kept.put_) == scr.BURST_MOST, "at most BURST_MOST keys"
+
+
+def _locked_face():
+    run = _unlocked_face()
+    run.press("L")
+    assert wait_until(lambda: "; locked" in ask("state")), "not locked"
+    run.wait_for(lambda: run.term.text(0).startswith("d750ctrl. Receiving. PTT locked."), "PTT locked", 5)
+    run.soak(1.5)
+    return run
+
+
+def test_a_lock_lost_to_another_clients_unlock_is_said():
+    run = _locked_face()
+    try:
+        ask("unlock")  # another program unlocks
+        run.wait_for(lambda: run.term.text(0).startswith("d750ctrl. Receiving. Unlocked."), "Unlocked", 8)
+        run.shows(sm.LOCK_GONE, 22, 5)
+        assert not lines.problems(run.term.text(22), 40), run.term.text(22)
+        run.quit_cleanly("Q")
+    finally:
+        if "; locked" in ask("state"):
+            ask("unlock")
+        run.end()
+
+
+def test_a_lock_lost_to_a_daemon_restart_is_said():
+    run = _locked_face()
+    try:
+        stop_test_bed(BED[0])  # the daemon starts again: its lock is gone
+        BED[0] = start_test_bed()
+        run.wait_for(lambda: run.term.text(0).startswith("d750ctrl. Receiving. Unlocked."), "Unlocked again", 30)
+        run.shows(sm.LOCK_GONE, 22, 10)
+        assert not lines.problems(run.term.text(22), 40), run.term.text(22)
+        run.quit_cleanly("Q")
+    finally:
+        if "; locked" in ask("state"):
+            ask("unlock")
+        run.end()
+
+
 # --------------------------------------------------------------------------- the run
 
 
@@ -2343,9 +2645,11 @@ def main():
                test_the_loops_work_for_one_key_drains_when_the_question_changes, test_urgent_threads_one_of_each_kind,
                test_escdelay_default, test_tool_arguments,
                test_check_with_no_terminal_and_no_daemon, test_help_and_bad_options,
-               test_no_daemon_is_said_before_curses_starts):
+               test_no_daemon_is_said_before_curses_starts, test_paste_guard_a_start_mark_cut_in_a_wait,
+               test_a_start_mark_cut_in_a_wait_with_no_clock_at_both_questions,
+               test_the_drain_at_a_way_out_hands_keys_to_the_late_path):
         test(fn)
-    bed = start_test_bed()
+    BED[0] = start_test_bed()
     try:
         todays_run()
         for fn in (test_list_at_40_by_12, test_list_at_120_by_40, test_face_at_40_by_12, test_face_at_120_by_40,
@@ -2365,10 +2669,18 @@ def main():
                    test_a_marked_paste_at_a_question_leaves_it_open, test_an_open_paste_never_eats_an_unkey,
                    test_an_escape_then_a_bracket_alone_sets_nothing, test_the_blocker_at_the_unlock_question,
                    test_the_blocker_in_separate_writes, test_a_paste_then_letters_in_the_wait_set_nothing,
-                   test_a_late_lock_key_while_locked_does_nothing, test_a_paste_cut_after_its_last_escape_sets_nothing):
+                   test_a_late_lock_key_while_locked_does_nothing, test_a_paste_cut_after_its_last_escape_sets_nothing,
+                   test_sigquit_puts_the_terminal_back, test_a_start_mark_cut_in_the_wait_at_the_unlock_question,
+                   test_a_start_mark_cut_in_the_wait_at_the_frame_question,
+                   test_unkey_and_lock_in_a_window_too_small_in_help_and_the_memory_list,
+                   test_an_unkey_and_ctrl_c_in_one_write, test_an_unkey_and_ctrl_backslash_in_one_write,
+                   test_ctrl_c_in_a_tool_belongs_to_the_tool,
+                   test_a_key_still_waiting_at_a_way_out_goes_to_the_late_path,
+                   test_a_lock_lost_to_another_clients_unlock_is_said,
+                   test_a_lock_lost_to_a_daemon_restart_is_said):  # last: it starts the test bed again
             test(fn)
     finally:
-        stop_test_bed(bed)
+        stop_test_bed(BED[0])
     if FAILED:
         print(f"Fail: d750ctrl, {len(FAILED)} of {TOTAL[0]} tests.")
         return 1
