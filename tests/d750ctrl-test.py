@@ -13,8 +13,10 @@ frame's catcher is not on a station port and must show that nothing is sent; no 
 finished. The test ends only the test bed it started. Exit 0 when every test passes.
 GPL-2.0-or-later.
 """
+import contextlib
 import curses
 import fcntl
+import io
 import os
 import queue
 import re
@@ -2334,17 +2336,26 @@ def test_paste_guard_a_start_mark_cut_in_a_wait():
     assert [keys.take(code, 0.8)[0] for code in C("[2")] == [None, None]
 
 
-def _hand_clock_keys(what):
-    """The probe's bytes through Keys, the paste guard and the real model, with a clock given by
-    hand: the question of what is open, then two marked pastes, the second's start mark cut in
-    the wait after the first. Returns the Runner and what was done after the pastes."""
+PROBE_BURSTS = ((OPEN + "hi" + CLOSE, 103.0), ("\x1b", 103.3), ("[200~y" + CLOSE, 104.0))
+# The reviewer's case: a start mark in three pieces after a paste, each under a second after the
+# last, more than a second in all; its text holds a y and a Q.
+THREE_PIECES = ((OPEN + "hi" + CLOSE, 102.5), ("\x1b", 102.7), ("[2", 103.4), ("00~yQ" + CLOSE, 104.1))
+
+
+def _hand_clock_keys(what, bursts=PROBE_BURSTS):
+    """Bytes through Keys, the paste guard and the real model, with a clock given by hand: the
+    question of what is open, then the bursts, by default the probe's two marked pastes, the
+    second's start mark cut in the wait after the first. Returns the Runner and what was done
+    after the question opened, a Quit included."""
     r = fd.Runner(xara_port=XARA_PORT)
     r.model.size(80, 24)
     now = [100.0]
+    quits = []
 
     def hand(todos):
         todos = list(todos or ())
         if any(isinstance(x, sm.Quit) for x in todos):
+            quits.append(sm.Quit())
             return True
         r.run(todos)
         return False
@@ -2363,13 +2374,12 @@ def _hand_clock_keys(what):
         burst("c", 100.0)
         burst("c", 101.0)
     start = len(r.done)
-    burst(OPEN + "hi" + CLOSE, 103.0)
-    burst("\x1b", 103.3)  # 0.2 seconds later, and ESCDELAY's 0.1 before curses gives it
-    burst("[200~y" + CLOSE, 104.0)
+    for text, at in bursts:  # the probe's Escape comes 0.2 seconds on, and ESCDELAY's 0.1 before curses gives it
+        burst(text, at)
     for at in (104.5, 105.5, 107.0):
         now[0] = at
         keys.poll(at)
-    return r, r.done[start:]
+    return r, r.done[start:] + quits
 
 
 def test_a_start_mark_cut_in_a_wait_with_no_clock_at_both_questions():
@@ -2380,6 +2390,91 @@ def test_a_start_mark_cut_in_a_wait_with_no_clock_at_both_questions():
     r, done = _hand_clock_keys("frame")
     assert r.model.asked == "frame_send", r.model.asked
     assert r.carrier.frames == [] and not any(isinstance(x, sm.SendFrame) for x in done), done
+
+
+def test_a_start_mark_in_three_pieces_with_no_clock_at_the_unlock_question():
+    # Each piece under a second after the last, more than a second in all: the second counts from
+    # the last piece, so the mark goes on and its y and Q are a paste's text, never keys.
+    r, done = _hand_clock_keys("unlock", THREE_PIECES)
+    assert not any(isinstance(x, sm.Quit) for x in done), done
+    assert not any(isinstance(x, sm.Set) and x.line == "unlock" for x in done), done
+    assert r.model.asked == "unlock" and r.daemon.locked, (r.model.asked, r.daemon.locked)
+    assert r.model.message == sm.PASTE_DROPPED, r.model.message
+    items = pasted([(OPEN + "a" + CLOSE, 0.0), ("\x1b", 0.2), ("[2", 0.9), ("00~yQ" + CLOSE, 1.6)])
+    assert items == P("a") + LATE("\x1b") + P("yQ"), items
+    items = pasted([("\x1b", 0.0), ("[2", 0.9), ("00~yQ" + CLOSE, 1.8)])
+    assert items == K("\x1b") + P("yQ"), ("outside a wait too", items)
+    items = pasted([("\x1b", 0.0), ("[2", 0.9), (None, 2.0), ("00~yQ" + CLOSE, 2.1)])
+    assert not any(item[0] == "paste" for item in items), ("a second with no piece ends it", items)
+
+
+def test_later_pieces_of_a_start_mark_in_the_wait_are_dropped():
+    # The Escape and the next piece both in the wait: both dropped there; when the mark does not
+    # go on, none of it is ever a key.
+    items = pasted([(OPEN + "a" + CLOSE, 0.0), ("\x1b", 0.2), ("[2", 0.4), (None, 2.0)])
+    assert items == P("a") + LATE("\x1b[2"), items
+    items = pasted([(OPEN + "a" + CLOSE, 0.0), ("\x1b", 0.2), ("[", 0.4), ("2", 0.6), (None, 2.0)])
+    assert items == P("a") + LATE("\x1b[2"), items
+
+
+def test_a_code_dropped_in_the_wait_starts_the_wait_again():
+    # Each held piece dropped in the wait starts the wait again, so a key after it is dropped too.
+    items = pasted([(OPEN + "a" + CLOSE, 0.0), ("\x1b", 0.4), ("[", 0.8), ("z", 1.2)])
+    assert items == P("a") + LATE("\x1b[") + LATE("z"), items
+    items = pasted([(OPEN + "a" + CLOSE, 0.0), ("\x1b", 0.4), ("z", 0.8)])
+    assert items == P("a") + LATE("\x1b") + LATE("z"), items
+    items = pasted([(OPEN + "a" + CLOSE, 0.0), ("\x1b", 0.4), ("[", 0.8), ("z", 1.4)])
+    assert items[-1] == ("key", ord("z")), ("half a second after the last dropped piece, keys act", items)
+
+
+class _NoTerminal:
+    """What run_here asks of a window, with no terminal."""
+
+    def clear(self):
+        pass
+
+    def refresh(self):
+        pass
+
+
+def test_the_handlers_around_a_tool():
+    kinds = (*scr.EXIT_SIGNALS, signal.SIGINT)
+    saved = {signum: signal.getsignal(signum) for signum in kinds}
+    names = ("def_prog_mode", "endwin", "reset_prog_mode")
+    kept = {name: getattr(scr.curses, name) for name in names}
+    kept_call, kept_paste = scr.subprocess.call, scr.paste_mode
+    during = []
+
+    def call(argv):
+        during.append({signum: signal.getsignal(signum) for signum in kinds})
+        return 0
+
+    signals = scr.Signals()
+    try:
+        for name in names:
+            setattr(scr.curses, name, lambda: None)
+        scr.subprocess.call, scr.paste_mode = call, (lambda on, fd=None: None)
+        signals.quiet()
+        with contextlib.redirect_stdout(io.StringIO()):  # the tool's "Running" line
+            result = scr.run_here(_NoTerminal(), sm.Tool("t", ("true",), False, None), signals)
+        after = {signum: signal.getsignal(signum) for signum in kinds}
+        signals.noted.append(signal.SIGTERM)
+        stopped = None
+        try:
+            scr.run_here(_NoTerminal(), sm.Tool("t", ("true",), False, None), signals)
+        except scr._Stop as stop:
+            stopped = stop.signum
+    finally:
+        for name in names:
+            setattr(scr.curses, name, kept[name])
+        scr.subprocess.call, scr.paste_mode = kept_call, kept_paste
+        for signum, handler in saved.items():
+            signal.signal(signum, signal.SIG_DFL if handler is None else handler)
+    assert result == "ran" and len(during) == 1, (result, during)
+    assert during[0][signal.SIGINT] is signal.default_int_handler, "Ctrl+C did not belong to the tool"
+    assert all(during[0][s] is scr._on_signal for s in scr.EXIT_SIGNALS), during
+    assert all(after[s] == signals.note for s in kinds), "the handlers were left loud after the tool"
+    assert stopped == signal.SIGTERM and len(during) == 1, "a way out already noted ran the tool"
 
 
 def _a_mark_cut_in_the_wait(run, text):
@@ -2647,7 +2742,10 @@ def main():
                test_check_with_no_terminal_and_no_daemon, test_help_and_bad_options,
                test_no_daemon_is_said_before_curses_starts, test_paste_guard_a_start_mark_cut_in_a_wait,
                test_a_start_mark_cut_in_a_wait_with_no_clock_at_both_questions,
-               test_the_drain_at_a_way_out_hands_keys_to_the_late_path):
+               test_the_drain_at_a_way_out_hands_keys_to_the_late_path,
+               test_a_start_mark_in_three_pieces_with_no_clock_at_the_unlock_question,
+               test_later_pieces_of_a_start_mark_in_the_wait_are_dropped,
+               test_a_code_dropped_in_the_wait_starts_the_wait_again, test_the_handlers_around_a_tool):
         test(fn)
     BED[0] = start_test_bed()
     try:

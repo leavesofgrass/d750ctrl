@@ -59,6 +59,7 @@ RIG_REFUSED = [
     b"T 00", b"T 0.0", b"T off", b"T -0", b"T 1 x", b"\\set_ptt 00", b"F inf", b"F nan", b"F -inf", b"F 1e999",
     b"L RFPOWER inf", b"L SQL nan", b"T 4", b"T", b"T +1", b"\\set_ptt", b"T 1\x00", b"T\t1", b"f\rT 1", b"T 1\r\r",
     b"t\x0bT 1", b"T 1\xe9", b"T " + b"1" * 600,
+    b"L SQL 1e308", b"L SQL -1e308", b"F 1e308", b"F 1e10", b"F -1", b"+L SQL 1e308",
 ]
 # What hamlib's NET rigctl client and the programs here send to the rigctl port.
 RIG_PASSED = [
@@ -134,13 +135,17 @@ class Client:
 
 
 class Bed:
-    """The pretend radio in this process, and d750d against it on two ports this test picked."""
+    """The pretend radio in this process, and d750d against it on two ports this test picked. prepare, when
+    given, is done to the pretend radio before the daemon starts; script is the daemon to run, d750d.py or a
+    copy of it with a window widened."""
 
-    def __init__(self):
+    def __init__(self, prepare=None, script=D750D):
         self.master, self.slave = pty.openpty()
         self.path = os.ttyname(self.slave)
         self.sim = sim_mod.Sim()
         self.sim.flicker = False
+        if prepare is not None:
+            prepare(self.sim)
         self.stop = threading.Event()
         threading.Thread(target=sim_mod.serve, args=(self.master, self.sim), kwargs={"stop": self.stop},
                          daemon=True).start()
@@ -158,7 +163,7 @@ class Bed:
         for port in (env["D750_CMD_PORT"], env["D750_PTT_PORT"]):
             assert int(port) not in STATION_PORTS and int(port) > 0, port
         self.out = open(os.path.join(self.tmp, "d750d.out"), "w", encoding="utf-8")
-        self.proc = subprocess.Popen([sys.executable, "-I", D750D], env=env, stdout=self.out,
+        self.proc = subprocess.Popen([sys.executable, "-I", script], env=env, stdout=self.out,
                                      stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
         ok = wait_until(lambda: self._listening(self.cmd_port) and self._listening(self.ptt_port), 15, 0.1)
         assert ok, "the test daemon did not start listening"
@@ -308,7 +313,10 @@ class Refused(unittest.TestCase):
                 for line in RIG_REFUSED:
                     mark = bed.mark()
                     answer = c.ask(line)
-                    self.assertEqual(answer, "RPRT -1", f"{line!r}, locked {locked}")
+                    if line.startswith(b"+"):  # the extended answer: the command's name, then the error
+                        self.assertEqual(c.file.readline().decode().strip(), "RPRT -1", f"{line!r} after {answer!r}")
+                    else:
+                        self.assertEqual(answer, "RPRT -1", f"{line!r}, locked {locked}")
                     self.check_nothing_reached(line, locked, mark, answer)
                 self.assertEqual(c.ask(b"t"), "0", "the rigctl client was not kept")
             finally:
@@ -353,6 +361,25 @@ class Keying(unittest.TestCase):
                 self.assertEqual(c.ask(b"T " + v), "RPRT -1")
                 self.assertEqual(bed.since(mark), [], v)
                 self.assertFalse(bed.sim.keyed, v)
+        finally:
+            c.close()
+
+    def test_t0_not_confirmed_stays_keyed(self):
+        bed.set_locked(False)
+        c = Client(bed.ptt_port)
+        try:
+            self.assertEqual(c.ask(b"T 1"), "RPRT 0")
+            bed.sim.answer_n.add("RX")
+            mark = bed.mark()
+            self.assertEqual(c.ask(b"T 0"), "RPRT 0")
+            self.assertEqual(bed.since(mark), [b"RX"])
+            self.assertTrue(bed.sim.keyed)
+            self.assertIn("; keyed;", bed.state(), "a T 0 the radio did not confirm was believed")
+            self.assertEqual(c.ask(b"t"), "1")
+            bed.sim.answer_n.clear()
+            self.assertEqual(c.ask(b"T 0"), "RPRT 0")
+            self.assertIn("; not keyed;", bed.state())
+            self.assertFalse(bed.sim.keyed)
         finally:
             c.close()
 
@@ -416,6 +443,115 @@ class Keying(unittest.TestCase):
         self.assertTrue(wait_until(lambda: b"RX" in bed.sim.received[mark:], 5), "no RX when the client dropped")
         time.sleep(0.2)
         self.assertEqual(bed.log().count("unkey:"), before, "unkey logged when the radio was not keyed")
+
+
+def widened_copy():
+    """A copy of d750d.py with 0.3 s added between each lock check and its command, as the safety review did:
+    in ptt() right after the check that refuses PTT while locked, at that check's own level; on the command port
+    right before a line goes to the radio. Held under the serial lock, as it must be, the window cannot be raced;
+    a check outside it loses the race."""
+    with open(D750D, encoding="utf-8") as f:
+        lines = f.read().split("\n")
+
+    def indent(line):
+        return line[: len(line) - len(line.lstrip(" "))]
+
+    def where(text):
+        found = [i for i, line in enumerate(lines) if text in line]
+        assert len(found) == 1, f"the place to widen the window, {text!r}, is in d750d.py {len(found)} times"
+        return found[0]
+
+    i = where('raise OSError("locked: PTT refused")')
+    lines.insert(i + 1, indent(lines[i - 1]) + "if on: time.sleep(0.3)  # the test widens the window")
+    i = where("reply = radio.command(line)")
+    lines.insert(i, indent(lines[i]) + 'if line == "VX 1": time.sleep(0.3)  # the test widens the window')
+    path = os.path.join(tempfile.mkdtemp(prefix="d750d-widened."), "d750d.py")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+    return path
+
+
+class Race(unittest.TestCase):
+    """A lock and a keying command cannot race, with the window widened: nothing keys or arms the radio after
+    the lock's RX, and the state never reads keyed and locked together."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.bed = Bed(script=widened_copy())
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.bed.end()
+
+    def race(self, send, after):
+        b = self.bed
+        states, done = [], threading.Event()
+
+        def poll():
+            while not done.is_set():
+                states.append(b.state())
+                time.sleep(0.02)
+
+        b.set_locked(False)
+        mark = b.mark()
+        res = {}
+        poller = threading.Thread(target=poll)
+        poller.start()
+        sender = threading.Thread(target=lambda: res.setdefault("sent", send()))
+        sender.start()
+        time.sleep(0.1)
+        res["lock"] = b.cmd(b"lock")
+        sender.join(5)
+        time.sleep(0.2)
+        done.set()
+        poller.join(5)
+        got = b.since(mark)
+        self.assertTrue(res["lock"].startswith("OK locked"), res)
+        self.assertIn(b"RX", got, got)
+        rx = got.index(b"RX")
+        self.assertNotIn(after, got[rx:], f"{after!r} reached the radio after the lock's RX: {got}; {res}")
+        both = [s for s in states if "; keyed;" in s and "; locked;" in s]
+        self.assertEqual(both, [], "the state read keyed and locked together")
+        return res
+
+    def test_lock_against_t1(self):
+        c = Client(self.bed.ptt_port)
+        try:
+            self.race(lambda: c.ask(b"T 1"), b"TX")
+            self.assertFalse(self.bed.sim.keyed, "the radio is keyed after lock")
+            self.assertIn("; not keyed;", self.bed.state())
+        finally:
+            c.close()
+
+    def test_lock_against_vx(self):
+        try:
+            self.race(lambda: self.bed.cmd(b"VX 1"), b"VX 1")
+        finally:
+            self.bed.set_locked(False)
+            self.bed.cmd(b"VX 0")
+
+
+class StartUp(unittest.TestCase):
+    """The radio keyed before the daemon starts, and its first RX answered N: the daemon believes it keyed
+    and tries again until the radio says RX."""
+
+    def test_startup_unkey_retried(self):
+        def keyed_and_deaf(sim):
+            sim.keyed = True
+            sim.answer_n.add("RX")
+        b = Bed(prepare=keyed_and_deaf)
+        try:
+            mark = b.mark()  # after the start-up RX; nothing connects to the rigctl port from here, so no drop sends RX
+            time.sleep(2.5)
+            tries = [g for g in b.sim.received[mark:] if g == b"RX"]
+            self.assertGreaterEqual(len(tries), 2, "the start-up unkey was not tried again")
+            self.assertIn("; keyed;", b.state(), "an unkey the radio did not confirm was believed at start")
+            self.assertTrue(b.sim.keyed)
+            b.sim.answer_n.clear()
+            self.assertTrue(wait_until(lambda: not b.sim.keyed, 5), "the watchdog did not unkey the radio")
+            self.assertTrue(wait_until(lambda: "; not keyed;" in b.state(), 3))
+        finally:
+            b.end()
 
 
 class Ordinary(unittest.TestCase):

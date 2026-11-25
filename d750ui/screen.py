@@ -630,7 +630,8 @@ class PasteGuard:
 
     An Escape that ends a burst is a key at once; when the next burst, within a second, starts
     with the rest of a start mark, the paste starts there. The characters of a mark the link
-    cut are held until the next burst says what they are; after a second they go on as keys,
+    cut are held until the next burst says what they are, each piece within a second of the
+    last, as the key guard counts; after a second with no piece they go on as keys,
     or, inside a paste, as its text. Inside a paste, an Escape that ends a burst ends the
     paste and then acts as a key, and a paste with no end mark ends after two quiet seconds.
 
@@ -649,7 +650,8 @@ class PasteGuard:
         self.left_out = False  # an Escape was left out of the open paste
         self.opened_in = 0  # the burst the open paste started in
         self.last_at = None  # when the open paste last had a code
-        # ([(code, when it came)] of a start mark seen after an Escape key, when the Escape came)
+        # ([(code, when it came)] of a start mark seen after an Escape key, when its last piece came:
+        # the second it has to go on counts from that piece, as the key guard counts its own)
         self.start_seen = None
         self.start_dropped = 0  # how many of the held start mark's first codes came in a wait, dropped there
         self.end_seen = None  # (the part of an end mark seen after an Escape, inside a paste, when)
@@ -741,7 +743,7 @@ class PasteGuard:
                     self.wait[1] = now
                     self._late(items, got, waiting=True)
                     self.start_dropped += len(got)
-                self.start_seen = (seen + [(c, now) for c in got], at)
+                self.start_seen = (seen + [(c, now) for c in got], now)  # the second counts again from here
                 return items
             else:
                 self._release_start(items)

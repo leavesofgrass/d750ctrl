@@ -1478,6 +1478,24 @@ class LockAndSize(Frames):
             self.assertEqual(r.press("L"), [], keys)
             self.assertEqual(r.press("Q"), [], ("quit acts in main mode only", keys))
 
+    def test_unkey_and_lock_with_a_question_open_in_a_window_too_small(self):
+        # A key read before the paint tells the model the new size: the question is still open.
+        for keys in (("R",), ("t",), ("c",), ("c", "c"), ("k",), ("L", "L")):
+            for key in ("U", "L"):
+                r = sized("face")
+                r.tick(1.0)
+                r.press(*keys)
+                m = r.model
+                self.assertEqual(m.mode, sm.ASKING, keys)
+                asked, locked = m.asked, m.locked
+                m.width, m.height = 20, 5
+                self.assertIsNone(sm.shows(m.view, m.width, m.height))
+                todos = m.key(key)
+                want = [sm.Unkey()] if key == "U" else ([] if locked else [sm.Set("lock")])
+                self.assertEqual(todos, want, (keys, key))
+                self.assertEqual((m.mode, m.question), (sm.MAIN, 0), ("the question is answered no", keys, key))
+                self.assertEqual(m.message, sm.NO_WORDS.get(asked, sm.NOTHING_SENT), (keys, key))
+
     def test_typing_at_any_size_takes_no_unkey_or_lock(self):
         r = sized("face")
         r.press("1")

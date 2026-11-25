@@ -148,7 +148,9 @@ repeats = Repeats()
 class Radio:
     def __init__(self):
         self.ser = None
-        self.lock = threading.Lock()
+        # The serial lock. Held, too, while the lock is checked and set, so a lock and a keying command cannot
+        # race; reentrant, because those callers then send their command through command().
+        self.lock = threading.RLock()
         self.keyed_since = None
         self.unkey_failing = False          # an unkey failed and the belief stayed keyed
         self.locked = False
@@ -217,23 +219,29 @@ class Radio:
             log(f"unsolicited {len(other)} bytes on the port, discarded: {other[:40]!r}")
 
     def ptt(self, on):
-        """TX or RX. An unkey counts only when the radio answers RX: until then the belief stays keyed,
-        so the watchdog tries again."""
-        if on and self.locked:
-            raise OSError("locked: PTT refused")
-        t0 = time.monotonic()
-        reply = self.command("TX" if on else "RX")
-        ms = (time.monotonic() - t0) * 1000
-        if on:
-            self.keyed_since = time.monotonic()
-            self.unkey_failing = False
-        elif reply == "RX":
-            self.keyed_since = None
-            self.unkey_failing = False
-        log(f"{'key' if on else 'unkey'} in {ms:.0f} ms, radio said {reply!r}")
-        return reply
+        """TX or RX. The lock is checked with the serial lock held, so a lock cannot come between the check
+        and TX. The radio counts as keyed from before TX is written, and an unkey counts only when the radio
+        answers RX: until then the belief stays keyed, so the watchdog tries again."""
+        with self.lock:
+            if on and self.locked:
+                raise OSError("locked: PTT refused")
+            if on:
+                self.keyed_since = time.monotonic()
+                self.unkey_failing = False
+            t0 = time.monotonic()
+            reply = self.command("TX" if on else "RX")
+            ms = (time.monotonic() - t0) * 1000
+            if not on and reply == "RX":
+                self.keyed_since = None
+                self.unkey_failing = False
+            log(f"{'key' if on else 'unkey'} in {ms:.0f} ms, radio said {reply!r}")
+            return reply
 
     def unkey_quietly(self, why):
+        with self.lock:
+            return self._unkey_quietly(why)
+
+    def _unkey_quietly(self, why):
         """RX whenever asked, keyed or not, and the answer checked. True when the radio said RX.
         "unkey" goes in the log only when the radio was keyed; a failure is logged, and counted when it repeats."""
         keyed = self.keyed_since is not None
@@ -280,6 +288,10 @@ class Radio:
         return reply
 
     def state(self):
+        with self.lock:     # never between a lock being set and its unkey
+            return self._state()
+
+    def _state(self):
         return (f"port {'open' if self.ser else 'closed'} {PORT_PATH}; "
                 f"{'keyed' if self.keyed_since else 'not keyed'}; "
                 f"{'locked' if self.locked else 'unlocked'}; "
@@ -337,7 +349,7 @@ def finite(text):
     """A number hamlib may send for F or L: not inf, not nan, not a word."""
     try:
         return math.isfinite(float(text))
-    except ValueError:
+    except (ValueError, OverflowError):
         return False
 
 
@@ -377,8 +389,9 @@ def rigctl(line):
             if len(args) != 1 or args[0] not in ("0", "1", "2", "3"): return fail(-1)
             radio.ptt(args[0] != "0")
             return out([], "set_ptt")
-        if cmd == "F" and (len(args) < 1 or not finite(args[0])): return fail(-1)
-        if cmd == "L" and (len(args) < 2 or not finite(args[1])): return fail(-1)
+        if cmd == "F" and (len(args) < 1 or not finite(args[0]) or not 0 <= float(args[0]) < 1e10): return fail(-1)
+        # before anything is read from the radio: a value that is not a number, or overflows its field or SQL's scale
+        if cmd == "L" and (len(args) < 2 or not finite(args[1]) or not math.isfinite(float(args[1]) * 9)): return fail(-1)
         band = radio.tx_band()
         if cmd == "v": return out([f"VFO{'AB'[band]}"], "get_vfo", ["VFO"])
         if cmd == "V":
@@ -423,7 +436,7 @@ def rigctl(line):
                 radio.set_checked(f"SQ {band},{max(0, min(9, round(value * 9)))}"); return out([], "set_level")
             return fail()
         return fail()
-    except ValueError:
+    except (ValueError, OverflowError):     # a value too big for its field is the protocol's error; the client is kept
         return fail(-1)
 
 
@@ -444,6 +457,10 @@ def read_line(f, limit=LINE_LIMIT):
         if raw.endswith(b"\r"):
             raw = raw[:-1]
     return raw, len(raw) > limit
+
+
+class Refused(Exception):
+    """A command port line refused once the serial lock is held; its text is the reason."""
 
 
 def judge_cmd(raw, locked):
@@ -524,14 +541,18 @@ def serve_cmd(conn, peer):
                 if w == "state":
                     f.write((radio.state() + "\n").encode())
                 elif w == "lock":
-                    radio.locked = True
-                    if radio.unkey_quietly("lock requested"):
+                    with radio.lock:        # set, and the radio unkeyed, with nothing able to come between
+                        radio.locked = True
+                        confirmed = radio.unkey_quietly("lock requested")
+                    if confirmed:
                         f.write(b"OK locked, PTT refused until unlock\n")
                     else:
                         log("lock: locked, but the radio did not say it is receiving")
                         f.write(b"OK locked; the radio did not say it is receiving\n")
                 elif w == "unlock":
-                    radio.locked = False; f.write(b"OK unlocked\n")
+                    with radio.lock:
+                        radio.locked = False
+                    f.write(b"OK unlocked\n")
                 elif w == "reconnect":
                     radio.close("reconnect requested")
                     try:
@@ -542,7 +563,18 @@ def serve_cmd(conn, peer):
                     break
                 continue
             try:
-                reply = radio.command(line)
+                with radio.lock:
+                    # judged again with the serial lock held, so a lock cannot come between the check and the
+                    # command: VX, TN and PT may have passed above while unlocked
+                    if radio.locked:
+                        what, why = judge_cmd(raw, True)
+                        if what == "refuse":
+                            raise Refused(why)
+                    reply = radio.command(line)
+            except Refused as e:
+                f.write(f"ERR {e}\n".encode())
+                log(f"cmd client {peer}: refused {printable(raw[:80])!r}: {e}")
+                continue
             except OSError as e:
                 repeats.note(f"{e}", f"cmd client {peer}: {line!r} failed: {e}")
                 f.write(f"ERR {e}\n".encode())
@@ -574,10 +606,14 @@ def listen(addr, handler):
 def main():
     try:
         radio.open()
+        # The radio may have been keyed before this daemon started: it counts as keyed, for longer than the
+        # watchdog allows, until it answers RX. So an unkey it does not confirm is tried again each second.
+        radio.keyed_since = time.monotonic() - MAX_KEY_SECONDS - 1
         log(f"radio answers {radio.command('ID')!r}")
-        radio.ptt(False)
     except OSError as e:
         log(f"startup: {e}; will open the port when it appears")
+    if radio.keyed_since is not None:
+        radio.unkey_quietly("start")
     threading.Thread(target=watchdog, daemon=True).start()
     threading.Thread(target=listen, args=(CMD_LISTEN, serve_cmd), daemon=True).start()
     listen(PTT_LISTEN, serve_ptt)
